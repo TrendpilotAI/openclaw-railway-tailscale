@@ -30,17 +30,15 @@ RUN pnpm ui:install && pnpm ui:build
 
 # Runtime image
 FROM node:22-bookworm
-ARG CACHEBUST=1
 ENV NODE_ENV=production
 
+# Install system deps + Tailscale in a single layer for reliability
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl build-essential gcc g++ make procps file git \
-    python3 pkg-config sudo iptables iproute2 \
+    python3 pkg-config sudo iptables iproute2 dnsutils \
+  && curl -fsSL https://tailscale.com/install.sh | sh \
   && rm -rf /var/lib/apt/lists/*
-
-# Install Tailscale
-RUN curl -fsSL https://tailscale.com/install.sh | sh
 
 # Install Homebrew
 RUN useradd -m -s /bin/bash linuxbrew \
