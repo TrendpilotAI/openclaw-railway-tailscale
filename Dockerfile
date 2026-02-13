@@ -30,6 +30,7 @@ RUN pnpm ui:install && pnpm ui:build
 
 # Runtime image
 FROM node:22-bookworm
+ARG CACHEBUST=1
 ENV NODE_ENV=production
 
 RUN apt-get update \
