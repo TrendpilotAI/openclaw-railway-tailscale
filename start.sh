@@ -1,27 +1,37 @@
 #!/bin/bash
 set -e
 
-# Start Tailscale daemon in userspace networking mode (no TUN needed in containers)
-tailscaled --tun=userspace-networking --socks5-server=localhost:1055 --state=/data/tailscale/tailscaled.state &
-sleep 2
-
-# Authenticate with Tailscale using auth key
+# --- Tailscale Setup ---
 if [ -n "$TAILSCALE_AUTHKEY" ]; then
-  tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="${TAILSCALE_HOSTNAME:-openclaw-honey}"
+  echo "[tailscale] Starting daemon..."
+  tailscaled --tun=userspace-networking --socks5-server=localhost:1055 \
+    --state=/data/tailscale/tailscaled.state &
+  TAILSCALED_PID=$!
+
+  # Wait for tailscaled to be ready
+  for i in $(seq 1 30); do
+    if tailscale status >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  tailscale up \
+    --authkey="$TAILSCALE_AUTHKEY" \
+    --hostname="${TAILSCALE_HOSTNAME:-openclaw-honey}" \
+    --accept-routes
   echo "[tailscale] Connected to tailnet"
 
-  # Enable Tailscale Serve to proxy the OpenClaw gateway
+  # Enable Tailscale Serve in the background once the gateway is up
   if [ "$TAILSCALE_SERVE" = "true" ]; then
-    # Wait for the OpenClaw gateway to start (server.js spawns it)
-    echo "[tailscale] Waiting for gateway to start before enabling serve..."
-    # Serve will be configured after the gateway is up
     (
-      # Wait for gateway port to be available
-      for i in $(seq 1 60); do
+      echo "[tailscale] Waiting for gateway before enabling serve..."
+      for i in $(seq 1 120); do
         if curl -sf http://127.0.0.1:18789/health > /dev/null 2>&1; then
-          tailscale serve --bg --https=443 http://127.0.0.1:18789 2>/dev/null && \
-            echo "[tailscale] Serve enabled: https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')/" || \
-            echo "[tailscale] Serve setup skipped (may need ACL)"
+          sleep 2
+          tailscale serve --bg --https=443 http://127.0.0.1:18789 2>&1 && \
+            echo "[tailscale] Serve enabled on tailnet" || \
+            echo "[tailscale] Serve setup failed (check ACLs)"
           break
         fi
         sleep 2
@@ -29,8 +39,15 @@ if [ -n "$TAILSCALE_AUTHKEY" ]; then
     ) &
   fi
 else
-  echo "[tailscale] No TAILSCALE_AUTHKEY set, skipping Tailscale"
+  echo "[tailscale] No TAILSCALE_AUTHKEY set, skipping"
 fi
 
-# Start the OpenClaw wrapper server
+# --- GitHub CLI Setup ---
+if [ -n "$GITHUB_TOKEN" ]; then
+  git config --global credential.helper store
+  echo "https://oauth2:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+  echo "[github] Credentials configured"
+fi
+
+# --- Start OpenClaw ---
 exec node /app/src/server.js
