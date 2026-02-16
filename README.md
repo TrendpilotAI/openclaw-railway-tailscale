@@ -1,14 +1,15 @@
-# OpenClaw on Railway with Tailscale
+# OpenClaw + n8n + Tailscale on Railway
 
-Deploy [OpenClaw](https://github.com/openclaw/openclaw) to Railway with secure Tailscale mesh networking. One click to deploy, zero SSH required.
+Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io) to Railway with secure Tailscale mesh networking. One click to deploy, zero SSH required.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.app/template/TEMPLATE_ID?referralCode=YOUR_CODE)
 
 ## What This Does
 
 - Builds OpenClaw from source and runs the gateway on Railway
-- Connects the instance to your Tailscale tailnet automatically
-- Exposes the gateway via Tailscale Serve (HTTPS on your tailnet)
+- Deploys n8n with PostgreSQL and Redis for workflow automation
+- Connects OpenClaw to n8n via webhooks for AI-triggered workflows
+- Wraps everything in a Tailscale encrypted mesh network
 - Provides a browser-based setup wizard at `/setup` for onboarding
 - Your local OpenClaw CLI discovers the remote instance over Tailscale
 
@@ -46,6 +47,7 @@ In Railway's Variables tab, set:
 | `OPENAI_API_KEY` | No | Alternative LLM provider |
 | `GITHUB_TOKEN` | No | GitHub PAT for repo access from the instance |
 | `OPENCLAW_GATEWAY_TOKEN` | No | Gateway auth token (auto-generated if not set) |
+| `OPENCLAW_HOOKS_TOKEN` | No | Shared secret for webhook auth (OpenClaw <-> n8n) |
 | `OPENCLAW_STATE_DIR` | No | State directory (default: `/data/.openclaw`) |
 | `OPENCLAW_WORKSPACE_DIR` | No | Workspace directory (default: `/data/workspace`) |
 
@@ -77,38 +79,63 @@ Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 ## Architecture
 
 ```
-                        Railway
-                   +-----------------+
-                   |   Express       |
-  Internet ------>|   Wrapper :8080  |
-  (Railway URL)   |   |             |
-                   |   +-> /setup   | (browser-based setup wizard)
-                   |   +-> /healthz | (Railway health checks)
-                   |   +-> /*       | (proxy to OpenClaw gateway)
-                   |       |        |
-                   |   OpenClaw     |
-                   |   Gateway      |
-                   |   :18789       |
-                   |       |        |
-                   |   Tailscale    |-------> Your Tailnet
-                   |   (userspace)  |         (encrypted mesh)
-                   +-----------------+
-                         |
-                      /data volume
-                   (config + workspace)
+                          Railway Private Network
+  ┌─────────────────────────────────────────────────────────────┐
+  │                                                             │
+  │  ┌─────────────────┐     webhooks      ┌───────────────┐   │
+  │  │  OpenClaw        │◄────────────────►│  n8n Primary   │   │
+  │  │  Express :8080   │  /hooks/agent     │  :5678         │   │
+  │  │  Gateway :18789  │  /hooks/wake      │                │   │
+  │  │  Tailscale       │                   │  n8n Worker    │   │
+  │  └────────┬─────────┘                   └───────┬────────┘   │
+  │           │                                     │            │
+  │           │                              ┌──────┴──────┐     │
+  │      /data volume                        │  PostgreSQL  │     │
+  │   (config + workspace)                   │  Redis       │     │
+  │                                          └─────────────┘     │
+  └─────────────────────────────────────────────────────────────┘
+              │
+              │ Tailscale (WireGuard)
+              ▼
+        Your Tailnet
+    (encrypted mesh network)
 ```
 
-**Express wrapper** (`src/server.js`) handles:
-- Health checks for Railway's deployment probes
-- `/setup` wizard with Basic auth (password-protected)
-- Reverse proxy to the internal OpenClaw gateway
-- WebSocket upgrade support for real-time features
-- Backup export/import for the `/data` volume
+### Services
 
-**Tailscale** (`start.sh`) runs in userspace networking mode:
-- Connects to your tailnet using the auth key
-- Optionally enables Tailscale Serve to expose the gateway as HTTPS on your tailnet
-- No kernel modules or `CAP_NET_ADMIN` required
+| Service | Role |
+|---|---|
+| **OpenClaw** | AI assistant gateway with setup wizard, proxied through Express |
+| **n8n Primary** | Workflow automation engine with AI agent nodes |
+| **n8n Worker** | Queue-based execution for heavy workflows |
+| **PostgreSQL** | Persistent storage for n8n workflows and credentials |
+| **Redis** | Queue backend for distributed n8n execution |
+| **Tailscale** | Encrypted mesh networking (userspace, no root required) |
+
+### How OpenClaw connects to n8n
+
+OpenClaw and n8n communicate via webhooks over Railway's private network:
+
+**n8n triggering OpenClaw** (run AI from a workflow):
+```bash
+# n8n HTTP Request node calls OpenClaw's hooks API
+POST http://openclaw-railway-template.railway.internal:8080/hooks/agent
+Authorization: Bearer <OPENCLAW_HOOKS_TOKEN>
+Content-Type: application/json
+
+{"message": "Summarize today's sales data", "deliver": true, "channel": "slack"}
+```
+
+**OpenClaw triggering n8n** (AI kicks off a workflow):
+```bash
+# OpenClaw cron or tool calls n8n's webhook trigger
+POST http://Primary.railway.internal:5678/webhook/my-workflow
+Content-Type: application/json
+
+{"data": "process this"}
+```
+
+Set `OPENCLAW_HOOKS_TOKEN` on the OpenClaw service to enable webhook auth.
 
 ## Managing Your Instance
 
