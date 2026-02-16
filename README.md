@@ -150,6 +150,7 @@ Running OpenClaw 24/7 on Railway can burn through API credits fast. This templat
 | **Context pruning** | `cache-ttl` with 6h TTL | Automatically prune old context, keep cache valid, reduce token bloat |
 | **Memory compaction** | Flush at 40k tokens | Distill sessions into daily memory files instead of growing context forever |
 | **Embeddings** | `text-embedding-3-small` | Cheapest OpenAI embedding model for memory search |
+| **Coding subagents** | `openai-codex/gpt-5.3-codex` | GPT-5.3 Codex for coding tasks — purpose-built for agentic code work |
 | **Concurrency limits** | 4 agents, 8 subagents max | Prevent cascading retries and runaway token consumption |
 
 ### Brain + Muscle pattern
@@ -159,7 +160,7 @@ For best results, use an expensive model as the "brain" (orchestrator) and cheap
 | Role | Recommended Model | Cost |
 |---|---|---|
 | **Brain** (orchestration) | `anthropic/claude-opus-4-6` | $$$ |
-| **Coding muscle** | `deepseek/deepseek-reasoner` or Codex | $ |
+| **Coding muscle** | `openai-codex/gpt-5.3-codex` (default) | $$ |
 | **Heartbeat** | `openrouter/openai/gpt-5-nano` | Free-tier |
 | **Subagents** | `deepseek/deepseek-reasoner` | $ |
 | **Web search** | Brave API | $ |

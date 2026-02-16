@@ -723,7 +723,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         sources: ["memory", "sessions"],
       },
       maxConcurrent: 4,
-      subagents: { maxConcurrent: 8 },
+      subagents: {
+        maxConcurrent: 8,
+        model: "openai-codex/gpt-5.3-codex",
+      },
     };
     for (const [key, val] of Object.entries(costDefaults)) {
       const configKey = key === "maxConcurrent" || key === "subagents" || key === "heartbeat"
