@@ -87,6 +87,10 @@ function resolveGatewayToken() {
 const OPENCLAW_GATEWAY_TOKEN = resolveGatewayToken();
 process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
 
+// Webhook hooks token for OpenClaw <-> n8n bridge.
+const OPENCLAW_HOOKS_TOKEN = process.env.OPENCLAW_HOOKS_TOKEN?.trim() || "";
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL?.trim() || "";
+
 // Where the gateway will listen internally (we proxy to it).
 const INTERNAL_GATEWAY_PORT = Number.parseInt(process.env.INTERNAL_GATEWAY_PORT ?? "18789", 10);
 const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
@@ -693,6 +697,25 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
+    // Auto-configure webhook hooks for n8n bridge when OPENCLAW_HOOKS_TOKEN is set.
+    if (OPENCLAW_HOOKS_TOKEN) {
+      const hooksCfg = {
+        enabled: true,
+        token: OPENCLAW_HOOKS_TOKEN,
+        path: "/hooks",
+        allowedAgentIds: ["hooks", "main"],
+        defaultSessionKey: "hook:ingress",
+      };
+      const hooksSet = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["config", "set", "--json", "hooks", JSON.stringify(hooksCfg)]),
+      );
+      extra += `\n[hooks] exit=${hooksSet.code} (webhook bridge ${hooksSet.code === 0 ? "enabled" : "failed"})\n${hooksSet.output || "(no output)"}`;
+      if (N8N_WEBHOOK_URL) {
+        extra += `\n[hooks] n8n reachable at ${N8N_WEBHOOK_URL}`;
+      }
+    }
+
     // Optional: configure a custom OpenAI-compatible provider (base URL) for advanced users.
     if (payload.customProviderId?.trim() && payload.customProviderBaseUrl?.trim()) {
       const providerId = payload.customProviderId.trim();
@@ -1240,8 +1263,34 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
   console.log(`[wrapper] gateway token: ${OPENCLAW_GATEWAY_TOKEN ? "(set)" : "(missing)"}`);
   console.log(`[wrapper] gateway target: ${GATEWAY_TARGET}`);
+  console.log(`[wrapper] hooks token: ${OPENCLAW_HOOKS_TOKEN ? "(set)" : "(not set - n8n bridge disabled)"}`);
+  if (N8N_WEBHOOK_URL) console.log(`[wrapper] n8n webhook url: ${N8N_WEBHOOK_URL}`);
   if (!SETUP_PASSWORD) {
     console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
+  }
+
+  // Auto-configure webhook hooks for n8n bridge on boot (idempotent).
+  if (isConfigured() && OPENCLAW_HOOKS_TOKEN) {
+    console.log("[wrapper] configuring webhook hooks for n8n bridge...");
+    try {
+      const hooksCfg = {
+        enabled: true,
+        token: OPENCLAW_HOOKS_TOKEN,
+        path: "/hooks",
+        allowedAgentIds: ["hooks", "main"],
+        defaultSessionKey: "hook:ingress",
+      };
+      await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["config", "set", "--json", "hooks", JSON.stringify(hooksCfg)]),
+      );
+      console.log("[wrapper] webhook hooks configured");
+      if (N8N_WEBHOOK_URL) {
+        console.log(`[wrapper] n8n endpoint: ${N8N_WEBHOOK_URL}`);
+      }
+    } catch (err) {
+      console.error(`[wrapper] hooks config failed: ${String(err)}`);
+    }
   }
 
   // Auto-start the gateway if already configured so polling channels (Telegram/Discord/etc.)
