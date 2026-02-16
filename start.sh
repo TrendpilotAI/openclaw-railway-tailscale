@@ -18,7 +18,7 @@ if [ -n "$TAILSCALE_AUTHKEY" ]; then
 
   tailscale up \
     --authkey="$TAILSCALE_AUTHKEY" \
-    --hostname="${TAILSCALE_HOSTNAME:-openclaw-honey}" \
+    --hostname="${TAILSCALE_HOSTNAME:-openclaw-railway}" \
     --accept-routes
   echo "[tailscale] Connected to tailnet"
 

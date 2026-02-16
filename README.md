@@ -40,7 +40,7 @@ In Railway's Variables tab, set:
 |---|---|---|
 | `SETUP_PASSWORD` | Yes | Password to access the `/setup` wizard |
 | `TAILSCALE_AUTHKEY` | Yes | Tailscale auth key (reusable + ephemeral) |
-| `TAILSCALE_HOSTNAME` | No | Tailnet hostname (default: `openclaw-honey`) |
+| `TAILSCALE_HOSTNAME` | No | Tailnet hostname (default: `openclaw-railway`) |
 | `TAILSCALE_SERVE` | No | Enable Tailscale Serve HTTPS proxy (default: `true`) |
 | `ANTHROPIC_API_KEY` | No | Set here or enter during setup wizard |
 | `OPENAI_API_KEY` | No | Alternative LLM provider |
@@ -69,7 +69,7 @@ With Tailscale installed on your Mac/PC, the Railway instance appears on your ta
 tailscale status | grep openclaw
 
 # The OpenClaw gateway is accessible at:
-# https://openclaw-honey.<your-tailnet>.ts.net
+# https://openclaw-railway.<your-tailnet>.ts.net
 ```
 
 Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
