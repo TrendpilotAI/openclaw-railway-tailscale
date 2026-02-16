@@ -697,6 +697,42 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
+    // Cost optimization: cheap heartbeat model, context pruning, memory compaction, concurrency limits.
+    // These defaults prevent runaway API spend on a 24/7 Railway deployment.
+    const costDefaults = {
+      heartbeat: {
+        model: "openrouter/openai/gpt-5-nano",
+        every: "30m",
+        activeHours: { start: "06:00", end: "23:00", timezone: "UTC" },
+      },
+      contextPruning: {
+        mode: "cache-ttl",
+        ttl: "6h",
+        keepLastAssistants: 3,
+      },
+      compaction: {
+        mode: "default",
+        memoryFlush: {
+          enabled: true,
+          softThresholdTokens: 40000,
+        },
+      },
+      memorySearch: {
+        provider: "openai",
+        model: "text-embedding-3-small",
+        sources: ["memory", "sessions"],
+      },
+      maxConcurrent: 4,
+      subagents: { maxConcurrent: 8 },
+    };
+    for (const [key, val] of Object.entries(costDefaults)) {
+      const configKey = key === "maxConcurrent" || key === "subagents" || key === "heartbeat"
+        ? `agents.defaults.${key}`
+        : `agents.defaults.${key}`;
+      await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", configKey, JSON.stringify(val)]));
+    }
+    extra += `\n[cost] applied cost-optimized defaults (cheap heartbeat, context pruning, memory compaction)`;
+
     // Auto-configure webhook hooks for n8n bridge when OPENCLAW_HOOKS_TOKEN is set.
     if (OPENCLAW_HOOKS_TOKEN) {
       const hooksCfg = {

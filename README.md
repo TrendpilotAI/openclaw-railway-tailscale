@@ -137,6 +137,42 @@ Content-Type: application/json
 
 Set `OPENCLAW_HOOKS_TOKEN` on the OpenClaw service to enable webhook auth.
 
+## Cost Optimization (Applied Automatically)
+
+Running OpenClaw 24/7 on Railway can burn through API credits fast. This template applies cost-optimized defaults on first setup that can **reduce spend by 90%+**:
+
+### What's auto-configured
+
+| Setting | Value | Why |
+|---|---|---|
+| **Heartbeat model** | `openrouter/openai/gpt-5-nano` | Background checks run every 30min — use the cheapest model ($0.005/day vs $0.24/day with Opus) |
+| **Active hours** | 06:00–23:00 UTC | Skip heartbeats while nobody's awake |
+| **Context pruning** | `cache-ttl` with 6h TTL | Automatically prune old context, keep cache valid, reduce token bloat |
+| **Memory compaction** | Flush at 40k tokens | Distill sessions into daily memory files instead of growing context forever |
+| **Embeddings** | `text-embedding-3-small` | Cheapest OpenAI embedding model for memory search |
+| **Concurrency limits** | 4 agents, 8 subagents max | Prevent cascading retries and runaway token consumption |
+
+### Brain + Muscle pattern
+
+For best results, use an expensive model as the "brain" (orchestrator) and cheaper models as "muscles" (workers):
+
+| Role | Recommended Model | Cost |
+|---|---|---|
+| **Brain** (orchestration) | `anthropic/claude-opus-4-6` | $$$ |
+| **Coding muscle** | `deepseek/deepseek-reasoner` or Codex | $ |
+| **Heartbeat** | `openrouter/openai/gpt-5-nano` | Free-tier |
+| **Subagents** | `deepseek/deepseek-reasoner` | $ |
+| **Web search** | Brave API | $ |
+| **Social/trending** | xAI Grok API | $ |
+
+Configure via the `/setup` config editor or tell your OpenClaw directly: *"For coding, use DeepSeek. For heartbeats, use the cheapest model available."*
+
+### Further savings
+
+- Add `OPENROUTER_API_KEY` for access to dozens of cheap models via one API key
+- Set model fallback chains in config so rate limits don't cascade to expensive retries
+- Create a `HEARTBEAT.md` in your workspace — if it's empty, heartbeats are skipped entirely
+
 ## Managing Your Instance
 
 ### Setup Wizard
