@@ -169,6 +169,7 @@ This template ships with default skills and CLI tools so your OpenClaw instance 
 | **n8n-expression-syntax** | Expression syntax (`{{$json.field}}`), variable access, webhook data structure |
 | **n8n-mcp-tools** | MCP tool selection guide — node search, validation, workflow management |
 | **n8n-validation** | Interpret and fix validation errors — severity levels, the validate-fix loop |
+| **n8n-skills** | Complete n8n knowledge base — 545 node docs, 20 templates, community packages, compatibility matrix |
 
 **Development & DevOps:**
 
