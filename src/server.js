@@ -697,6 +697,21 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
+    // Copy default workspace files (AGENTS.md with model routing prompt) if not already present.
+    const defaultWorkspaceDir = path.join(process.cwd(), "workspace");
+    try {
+      const defaultFiles = fs.readdirSync(defaultWorkspaceDir);
+      for (const file of defaultFiles) {
+        const dest = path.join(WORKSPACE_DIR, file);
+        if (!fs.existsSync(dest)) {
+          fs.copyFileSync(path.join(defaultWorkspaceDir, file), dest);
+          extra += `\n[workspace] copied default ${file}`;
+        }
+      }
+    } catch {
+      // workspace defaults dir may not exist in all builds
+    }
+
     // Cost optimization: cheap heartbeat model, context pruning, memory compaction, concurrency limits.
     // These defaults prevent runaway API spend on a 24/7 Railway deployment.
     const costDefaults = {
