@@ -1,26 +1,29 @@
 # OpenClaw + n8n + Tailscale on Railway
 
-Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io) to Railway with secure Tailscale mesh networking. One click to deploy, zero SSH required.
+Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io) to Railway with secure Tailscale mesh networking, built-in observability, and 4-platform compute routing. One click to deploy, zero SSH required.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.app/template/TEMPLATE_ID?referralCode=YOUR_CODE)
 
 ## What This Does
 
-- Builds OpenClaw from source and runs the gateway on Railway
+- Builds OpenClaw from source and runs the AI gateway on Railway
 - Deploys n8n with PostgreSQL and Redis for workflow automation
 - Connects OpenClaw to n8n via webhooks for AI-triggered workflows
-- Wraps everything in a Tailscale encrypted mesh network
+- Routes workloads across 4 platforms: Railway (gateway), Modal (GPU), n8n (orchestration), Composio (SaaS)
+- Wraps everything in a Tailscale encrypted mesh network (WireGuard)
+- Ships 30+ skills, 4 CLI tools, and 500+ SaaS integrations out of the box
+- Provides OpenTelemetry tracing with Langfuse (LLM evals) and PostHog (product analytics)
+- Applies cost-optimized defaults that reduce API spend by 90%+
 - Provides a browser-based setup wizard at `/setup` for onboarding
-- Your local OpenClaw CLI discovers the remote instance over Tailscale
 
 ## Prerequisites
 
-1. **Railway account** - [railway.app](https://railway.app)
-2. **Tailscale account** - [tailscale.com](https://tailscale.com) (free for personal use)
-3. **Tailscale auth key** - Generate one at [Tailscale Admin > Keys](https://login.tailscale.com/admin/settings/keys)
+1. **Railway account** — [railway.app](https://railway.app)
+2. **Tailscale account** — [tailscale.com](https://tailscale.com) (free for personal use)
+3. **Tailscale auth key** — Generate at [Tailscale Admin > Keys](https://login.tailscale.com/admin/settings/keys)
    - Enable **Reusable** and **Ephemeral** (recommended)
    - Pre-approve the key to skip manual device approval
-4. **LLM API key** - Anthropic, OpenAI, Google, OpenRouter, or another supported provider
+4. **LLM API key** — Anthropic, OpenAI, Google, OpenRouter, or another supported provider
 
 ## Quick Start
 
@@ -45,9 +48,11 @@ In Railway's Variables tab, set:
 | `TAILSCALE_SERVE` | No | Enable Tailscale Serve HTTPS proxy (default: `true`) |
 | `ANTHROPIC_API_KEY` | No | Set here or enter during setup wizard |
 | `OPENAI_API_KEY` | No | Alternative LLM provider |
+| `OPENROUTER_API_KEY` | No | Multi-model routing via OpenRouter |
 | `GITHUB_TOKEN` | No | GitHub PAT for repo access from the instance |
 | `OPENCLAW_GATEWAY_TOKEN` | No | Gateway auth token (auto-generated if not set) |
 | `OPENCLAW_HOOKS_TOKEN` | No | Shared secret for webhook auth (OpenClaw <-> n8n) |
+| `N8N_WEBHOOK_URL` | No | n8n internal URL (e.g. `http://Primary.railway.internal:5678`) |
 | `COMPOSIO_API_KEY` | No | Composio API key for Rube MCP (500+ SaaS integrations) |
 | `MODAL_TOKEN_ID` | No | Modal token ID for serverless GPU/compute tasks |
 | `MODAL_TOKEN_SECRET` | No | Modal token secret (pair with `MODAL_TOKEN_ID`) |
@@ -69,7 +74,7 @@ Once deployed, open your Railway service URL and navigate to `/setup`. Enter the
 3. Optionally configure Telegram, Discord, or Slack channels
 4. Click "Run setup"
 
-The wizard runs `openclaw onboard` non-interactively and starts the gateway.
+The wizard runs `openclaw onboard` non-interactively, applies cost-optimized defaults, copies 30+ skills to your workspace, and starts the gateway.
 
 ### 4. Connect from Your Local Machine
 
@@ -89,25 +94,25 @@ Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 
 ```
                           Railway Private Network
-  ┌─────────────────────────────────────────────────────────────┐
-  │                                                             │
-  │  ┌─────────────────┐     webhooks      ┌───────────────┐   │
-  │  │  OpenClaw        │◄────────────────►│  n8n Primary   │   │
-  │  │  Express :8080   │  /hooks/agent     │  :5678         │   │
-  │  │  Gateway :18789  │  /hooks/wake      │                │   │
-  │  │  Tailscale       │                   │  n8n Worker    │   │
-  │  └────────┬─────────┘                   └───────┬────────┘   │
-  │           │                                     │            │
-  │           │                              ┌──────┴──────┐     │
-  │      /data volume                        │  PostgreSQL  │     │
-  │   (config + workspace)                   │  Redis       │     │
-  │                                          └─────────────┘     │
-  └─────────────────────────────────────────────────────────────┘
-              │
-              │ Tailscale (WireGuard)
-              ▼
-        Your Tailnet
-    (encrypted mesh network)
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                                                                 │
+  │  ┌──────────────────┐     webhooks      ┌───────────────────┐  │
+  │  │  OpenClaw          │◄───────────────►│  n8n Primary       │  │
+  │  │  Express :8080     │  /hooks/agent    │  :5678             │  │
+  │  │  Gateway :18789    │  /hooks/wake     │                    │  │
+  │  │  Tailscale         │                  │  n8n Worker        │  │
+  │  │  OTel + PostHog    │                  └──────┬─────────────┘  │
+  │  └────────┬───────────┘                         │               │
+  │           │                              ┌──────┴──────┐        │
+  │      /data volume                        │  PostgreSQL  │        │
+  │   (config + workspace)                   │  Redis       │        │
+  │                                          └─────────────┘        │
+  └─────────────────────────────────────────────────────────────────┘
+              │                         │                    │
+              │ Tailscale (WireGuard)   │ HTTPS API          │ OAuth
+              ▼                         ▼                    ▼
+        Your Tailnet              Modal (GPU)          Composio (SaaS)
+    (encrypted mesh)          (serverless compute)    (500+ integrations)
 ```
 
 ### Services
@@ -120,8 +125,10 @@ Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 | **PostgreSQL** | Persistent storage for n8n workflows and credentials |
 | **Redis** | Queue backend for distributed n8n execution |
 | **Tailscale** | Encrypted mesh networking (userspace, no root required) |
+| **Modal** (external) | Serverless GPU/compute for ML inference, batch processing, image/video gen |
+| **Composio** (external) | Universal MCP server for 500+ SaaS integrations (Gmail, Slack, Notion, etc.) |
 
-### How OpenClaw connects to n8n
+### How OpenClaw Connects to n8n
 
 OpenClaw and n8n communicate via webhooks over Railway's private network:
 
@@ -146,9 +153,29 @@ Content-Type: application/json
 
 Set `OPENCLAW_HOOKS_TOKEN` on the OpenClaw service to enable webhook auth.
 
+## Infrastructure Routing
+
+The template routes workloads across 4 compute platforms automatically. See `workspace/AGENTS.md` for the full decision tree.
+
+| Platform | Best For | Cost |
+|---|---|---|
+| **Railway** (this container) | Gateway, web server, cron, lightweight CLI tasks | ~$5-20/mo fixed |
+| **Modal** (serverless) | ML inference, batch processing, image/video gen, data pipelines | Pay-per-second |
+| **n8n** (orchestration) | Multi-step workflows, scheduled jobs, webhook chains | Included in Railway plan |
+| **Composio** (SaaS bridge) | Direct SaaS actions (send email, create issue, update CRM) | Free tier available |
+
+### Routing Examples
+
+```
+"Fix the auth bug in middleware.ts"   → Railway local + Claude Opus 4.6
+"Generate 100 product thumbnails"     → Modal A10G GPU + Qwen 3.5 VL
+"Every morning, email a sales report" → n8n scheduled workflow
+"Post a message to Slack"             → Composio Rube MCP
+```
+
 ## Pre-Installed Skills & Tools
 
-This template ships with default skills and CLI tools so your OpenClaw instance is productive from the first boot.
+This template ships with 30+ skills and 4 CLI tools so your OpenClaw instance is productive from the first boot. Skills are automatically copied to your workspace on first setup.
 
 ### Skills (copied to workspace on first setup)
 
@@ -220,29 +247,52 @@ This template ships with default skills and CLI tools so your OpenClaw instance 
 | **Rube MCP** (`@composio/rube-mcp`) | Composio universal MCP server — 500+ SaaS integrations (Gmail, Slack, Notion, GitHub, etc.) |
 | **Bird CLI** (`@steipete/bird`) | Fast X/Twitter search via GraphQL (cookie auth, no API key needed for reading) |
 | **yt-dlp** | YouTube video metadata and transcript extraction |
-| **gog** | Installable via Homebrew (`brew install steipete/tap/gogcli`) at runtime |
+| **Modal** (`modal`) | Serverless GPU/compute CLI — deploy functions, run batch jobs on A10G/A100/H100 |
+| **Homebrew** | Available at runtime for installing additional CLI tools (e.g. `brew install steipete/tap/gogcli`) |
 
-Skills are automatically copied to your workspace on first setup. You can add more skills by placing SKILL.md files in your workspace's `skills/` directory.
+You can add more skills by placing `SKILL.md` files in your workspace's `skills/` directory.
+
+## Observability
+
+The template ships with built-in OpenTelemetry instrumentation. All tracing is opt-in and gracefully degrades — no keys means no overhead.
+
+### What Gets Traced
+
+| Layer | Auto-instrumented |
+|---|---|
+| **Express routes** | All `/setup/*`, `/healthz`, proxy requests |
+| **HTTP client** | Gateway proxy calls, n8n webhook calls |
+| **LLM providers** | OpenAI, Anthropic, Google, Cohere SDK calls (via OpenLLMetry) |
+
+### Trace Backends
+
+| Backend | Purpose | Required Vars |
+|---|---|---|
+| **Langfuse** | LLM tracing, evals, cost tracking | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` |
+| **PostHog** | Product analytics (setup, gateway events) | `POSTHOG_API_KEY` |
+| **OTLP** (Grafana, Jaeger, etc.) | Generic APM traces | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+
+PostHog events include OTel trace IDs for cross-system correlation. See `workspace/AGENTS.md` for the full observability architecture.
 
 ## Cost Optimization (Applied Automatically)
 
 Running OpenClaw 24/7 on Railway can burn through API credits fast. This template applies cost-optimized defaults on first setup that can **reduce spend by 90%+**:
 
-### What's auto-configured
+### What's Auto-Configured
 
 | Setting | Value | Why |
 |---|---|---|
 | **Heartbeat model** | `openrouter/openai/gpt-5-nano` | Background checks run every 30min — use the cheapest model ($0.005/day vs $0.24/day with Opus) |
-| **Active hours** | 06:00–23:00 UTC | Skip heartbeats while nobody's awake |
+| **Active hours** | 06:00-23:00 UTC | Skip heartbeats while nobody's awake |
 | **Context pruning** | `cache-ttl` with 6h TTL | Automatically prune old context, keep cache valid, reduce token bloat |
 | **Memory compaction** | Flush at 40k tokens | Distill sessions into daily memory files instead of growing context forever |
 | **Embeddings** | `text-embedding-3-small` | Cheapest OpenAI embedding model for memory search |
 | **Coding subagents** | `openai-codex/gpt-5.3-codex` | GPT-5.3 Codex for coding tasks — purpose-built for agentic code work |
 | **Concurrency limits** | 4 agents, 8 subagents max | Prevent cascading retries and runaway token consumption |
 
-### Brain + Muscle pattern
+### Brain + Muscle Pattern
 
-For best results, use an expensive model as the "brain" (orchestrator) and cheaper models as "muscles" (workers):
+Use an expensive model as the "brain" (orchestrator) and cheaper models as "muscles" (workers):
 
 | Role | Recommended Model | Cost |
 |---|---|---|
@@ -255,7 +305,7 @@ For best results, use an expensive model as the "brain" (orchestrator) and cheap
 
 Configure via the `/setup` config editor or tell your OpenClaw directly: *"For coding, use DeepSeek. For heartbeats, use the cheapest model available."*
 
-### Further savings
+### Further Savings
 
 - Add `OPENROUTER_API_KEY` for access to dozens of cheap models via one API key
 - Set model fallback chains in config so rate limits don't cascade to expensive retries
@@ -267,11 +317,11 @@ Configure via the `/setup` config editor or tell your OpenClaw directly: *"For c
 
 The `/setup` page provides:
 
-- **Status** - Gateway health, version, links to the OpenClaw UI
-- **Debug console** - Run safe diagnostic commands without SSH
-- **Config editor** - Edit the full `openclaw.json` config with backup
-- **Backup/restore** - Download and upload `.tar.gz` archives of `/data`
-- **Device pairing** - Approve Telegram/Discord DM pairing requests
+- **Status** — Gateway health, version, links to the OpenClaw UI
+- **Debug console** — Run safe diagnostic commands without SSH
+- **Config editor** — Edit the full `openclaw.json` config with backup
+- **Backup/restore** — Download and upload `.tar.gz` archives of `/data`
+- **Device pairing** — Approve Telegram/Discord DM pairing requests
 
 ### Health Endpoints
 
@@ -319,6 +369,13 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 2. Click "Refresh pending devices" to see requests
 3. Approve the device ID for your chat
 
+### No traces appearing in Langfuse
+
+1. Verify both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set
+2. Check Railway logs for `[otel] Langfuse span processor enabled`
+3. If you see `[otel] No trace backends configured`, the keys are missing or empty
+4. Verify `LANGFUSE_BASEURL` if using a self-hosted Langfuse instance
+
 ## Security
 
 - The `/setup` wizard is protected by `SETUP_PASSWORD` via HTTP Basic auth
@@ -328,22 +385,69 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 - Secret values are redacted in debug console output
 - Tar import validates paths to prevent directory traversal
 - Tailscale provides end-to-end encrypted mesh networking (WireGuard)
+- Observability data is sent only to backends you explicitly configure
 
-## Files
+## Project Structure
 
-| File | Purpose |
-|---|---|
-| `Dockerfile` | Multi-stage build: compiles OpenClaw from source, installs Tailscale + Bird + yt-dlp |
-| `start.sh` | Entrypoint: starts Tailscale, configures GitHub creds, launches server |
-| `src/server.js` | Express wrapper: setup wizard, health checks, gateway proxy, PostHog analytics |
-| `src/instrumentation.mjs` | OpenTelemetry SDK setup: Langfuse + OTLP exporters, auto-instrumentation |
-| `src/setup-app.js` | Browser JS for the `/setup` wizard UI |
-| `workspace/AGENTS.md` | Default multi-model routing system prompt |
-| `workspace/skills/` | Default skills: coding-agent, pr-creator, gog, last30days |
-| `railway.toml` | Railway deployment configuration |
-| `.env.example` | Template for required environment variables |
+```
+.
+├── Dockerfile                  # Multi-stage build: OpenClaw from source + Tailscale + tools
+├── start.sh                    # Entrypoint: Tailscale → GitHub creds → OTel instrumentation → server
+├── railway.toml                # Railway deployment config (healthcheck, restart policy)
+├── package.json                # Node.js dependencies (Express, OTel, PostHog, Langfuse)
+├── .env.example                # Template for all environment variables
+├── .gitignore
+├── LICENSE                     # MIT
+│
+├── src/
+│   ├── server.js               # Express wrapper: setup wizard, health, gateway proxy, PostHog
+│   ├── instrumentation.mjs     # OpenTelemetry SDK: Langfuse + OTLP exporters, auto-instrumentation
+│   └── setup-app.js            # Browser JS for the /setup wizard UI
+│
+├── workspace/
+│   ├── AGENTS.md               # Multi-model routing prompt + infra routing + observability docs
+│   └── skills/                 # 30+ default skills (copied to user workspace on first setup)
+│       ├── railway-deploy/     # Railway platform management (7 skills)
+│       ├── railway-status/
+│       ├── railway-environment/
+│       ├── railway-service/
+│       ├── railway-database/
+│       ├── railway-domain/
+│       ├── railway-projects/
+│       ├── n8n-skills/         # Comprehensive n8n knowledge base (545 node docs, 20 templates)
+│       ├── n8n-workflow-patterns/  # n8n workflow automation (7 skills)
+│       ├── n8n-code-javascript/
+│       ├── n8n-code-python/
+│       ├── n8n-node-configuration/
+│       ├── n8n-expression-syntax/
+│       ├── n8n-mcp-tools/
+│       ├── n8n-validation/
+│       ├── coding-agent/       # Development & DevOps (4 skills)
+│       ├── pr-creator/
+│       ├── test-driven-development/
+│       ├── writing-plans/
+│       ├── gog/                # Communication & Productivity (4 skills)
+│       ├── himalaya/
+│       ├── wacli/
+│       ├── jira/
+│       ├── last30days/         # Research & Analytics (5 skills)
+│       ├── data-storytelling/
+│       ├── visualization-expert/
+│       ├── project-planner/
+│       ├── strategy-advisor/
+│       ├── changelog-social/   # Content & Creative (3 skills)
+│       ├── scientific-slides/
+│       └── viral-generator-builder/
+│
+└── assets/
+    ├── openclaw-icon.png
+    ├── n8n-icon.png
+    └── tailscale-icon.png
+```
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture details, and contribution guidelines.
 
 Issues and PRs welcome. For questions about OpenClaw itself, visit the [OpenClaw Discord](https://discord.gg/clawd) (`#golden-path-deployments` channel).
 
