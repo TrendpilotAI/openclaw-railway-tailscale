@@ -6,16 +6,24 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "node src/server.js",
-    "start": "node src/server.js",
+    "dev": "node --import ./src/instrumentation.mjs src/server.js",
+    "start": "node --import ./src/instrumentation.mjs src/server.js",
     "lint": "node -c src/server.js",
     "test": "node --test",
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {
     "@composio/core": "^0.6.3",
+    "@langfuse/otel": "^4.6.1",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.70.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.212.0",
+    "@opentelemetry/sdk-node": "^0.212.0",
+    "@opentelemetry/sdk-trace-base": "^2.5.1",
+    "@traceloop/node-server-sdk": "^0.22.7",
     "express": "^5.1.0",
     "http-proxy": "^1.18.1",
+    "posthog-node": "^5.24.16",
     "tar": "^7.5.4"
   }
 }

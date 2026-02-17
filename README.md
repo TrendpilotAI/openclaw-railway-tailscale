@@ -51,6 +51,12 @@ In Railway's Variables tab, set:
 | `COMPOSIO_API_KEY` | No | Composio API key for Rube MCP (500+ SaaS integrations) |
 | `MODAL_TOKEN_ID` | No | Modal token ID for serverless GPU/compute tasks |
 | `MODAL_TOKEN_SECRET` | No | Modal token secret (pair with `MODAL_TOKEN_ID`) |
+| `LANGFUSE_PUBLIC_KEY` | No | Langfuse public key for LLM tracing and evals |
+| `LANGFUSE_SECRET_KEY` | No | Langfuse secret key |
+| `LANGFUSE_BASEURL` | No | Langfuse host (default: `https://cloud.langfuse.com`) |
+| `POSTHOG_API_KEY` | No | PostHog project API key for product analytics |
+| `POSTHOG_HOST` | No | PostHog ingest host (default: `https://us.i.posthog.com`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | Generic OTLP endpoint for APM (Grafana, Jaeger, etc.) |
 | `OPENCLAW_STATE_DIR` | No | State directory (default: `/data/.openclaw`) |
 | `OPENCLAW_WORKSPACE_DIR` | No | Workspace directory (default: `/data/workspace`) |
 
@@ -329,7 +335,8 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 |---|---|
 | `Dockerfile` | Multi-stage build: compiles OpenClaw from source, installs Tailscale + Bird + yt-dlp |
 | `start.sh` | Entrypoint: starts Tailscale, configures GitHub creds, launches server |
-| `src/server.js` | Express wrapper: setup wizard, health checks, gateway proxy |
+| `src/server.js` | Express wrapper: setup wizard, health checks, gateway proxy, PostHog analytics |
+| `src/instrumentation.mjs` | OpenTelemetry SDK setup: Langfuse + OTLP exporters, auto-instrumentation |
 | `src/setup-app.js` | Browser JS for the `/setup` wizard UI |
 | `workspace/AGENTS.md` | Default multi-model routing system prompt |
 | `workspace/skills/` | Default skills: coding-agent, pr-creator, gog, last30days |

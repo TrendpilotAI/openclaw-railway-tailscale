@@ -4,8 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { trace } from "@opentelemetry/api";
 import express from "express";
 import httpProxy from "http-proxy";
+import { PostHog } from "posthog-node";
 import * as tar from "tar";
 
 /** @type {Set<string>} */
@@ -99,6 +101,32 @@ const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}
 // Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
 const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+
+// PostHog product analytics (guarded — no crash if key not set).
+const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY?.trim();
+const posthog = POSTHOG_API_KEY
+  ? new PostHog(POSTHOG_API_KEY, {
+      host: process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com",
+      flushAt: 10,
+      flushInterval: 30_000,
+    })
+  : null;
+
+/** Track an event in PostHog with optional OTel trace correlation. */
+function trackEvent(event, properties = {}) {
+  if (!posthog) return;
+  const span = trace.getActiveSpan();
+  const traceId = span?.spanContext()?.traceId;
+  posthog.capture({
+    distinctId: process.env.RAILWAY_SERVICE_ID || "openclaw-railway",
+    event,
+    properties: {
+      ...properties,
+      ...(traceId ? { otel_trace_id: traceId } : {}),
+      railway_commit: process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
+    },
+  });
+}
 
 function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
@@ -309,9 +337,10 @@ app.get("/setup/healthz", (_req, res) => res.json({ ok: true }));
 // Keep this free of secrets.
 app.get("/healthz", async (_req, res) => {
   let gatewayReachable = false;
-  if (isConfigured()) {
+  if (isConfigured() && gatewayProc) {
     try {
-      gatewayReachable = await probeGateway();
+      const probe = await fetch(`${GATEWAY_TARGET}/`, { method: "GET", signal: AbortSignal.timeout(3000) });
+      gatewayReachable = Boolean(probe);
     } catch {
       gatewayReachable = false;
     }
@@ -886,6 +915,8 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await restartGateway();
   }
 
+  if (ok) trackEvent("setup_completed", { flow: payload.flow || "quickstart", authChoice: payload.authChoice });
+
   return res.status(ok ? 200 : 500).json({
     ok,
     output: `${onboard.output}${extra}`,
@@ -1362,6 +1393,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     try {
       await ensureGatewayRunning();
       console.log("[wrapper] gateway ready");
+      trackEvent("gateway_started");
     } catch (err) {
       console.error(`[wrapper] gateway failed to start at boot: ${String(err)}`);
     }
@@ -1382,8 +1414,13 @@ server.on("upgrade", async (req, socket, head) => {
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   // Best-effort shutdown
+  try {
+    if (posthog) await posthog.shutdown();
+  } catch {
+    // ignore
+  }
   try {
     if (gatewayProc) gatewayProc.kill("SIGTERM");
   } catch {

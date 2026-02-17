@@ -50,4 +50,4 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 
 # --- Start OpenClaw ---
-exec node /app/src/server.js
+exec node --import /app/src/instrumentation.mjs /app/src/server.js

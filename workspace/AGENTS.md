@@ -207,3 +207,57 @@ Your response here...
 - No COMPOSIO_API_KEY → fall back to direct API calls or n8n integrations
 - n8n unreachable → execute sequentially on Railway
 - GPU task on Railway → warn and suggest Modal: "This would be 10x faster on Modal GPU"
+
+---
+
+## Observability (OpenTelemetry + Langfuse + PostHog)
+
+**Full-stack tracing is built in.** The template ships with OpenTelemetry auto-instrumentation that traces Express routes, HTTP client calls, and LLM provider API calls automatically.
+
+### What Gets Traced (auto-instrumented)
+```
+Express routes (all /setup/*, /healthz, proxy)
+HTTP client calls (gateway proxy, n8n webhooks)
+LLM provider calls (OpenAI, Anthropic, Google, Cohere via OpenLLMetry)
+```
+
+### Trace Backends
+```
+LANGFUSE (LLM tracing + evals)
+├─ Receives all OTel spans via LangfuseSpanProcessor
+├─ View: latency, cost, token usage per LLM call
+├─ Run evals: scoring, classification, human feedback
+├─ Requires: LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
+└─ Dashboard: https://cloud.langfuse.com
+
+POSTHOG (product analytics)
+├─ Tracks: setup_completed, gateway_started
+├─ Correlates events with OTel trace IDs
+├─ Requires: POSTHOG_API_KEY
+└─ Dashboard: https://us.posthog.com
+
+OTLP (generic APM — optional)
+├─ Sends all spans to any OTLP-compatible backend
+├─ Works with: Grafana Tempo, Jaeger, Honeycomb, Datadog
+├─ Requires: OTEL_EXPORTER_OTLP_ENDPOINT
+└─ Example: http://tempo:4318
+```
+
+### How It Works
+```
+node --import instrumentation.mjs server.js
+         │
+         ├── OpenLLMetry auto-patches LLM SDKs (OpenAI, Anthropic, etc.)
+         ├── OTel auto-instruments Express + HTTP client
+         │
+         └── NodeSDK fans out spans to:
+              ├── LangfuseSpanProcessor → Langfuse (LLM eval + traces)
+              └── OTLPTraceExporter → Generic OTLP endpoint (APM)
+```
+
+### Graceful Degradation
+- No keys set → app starts normally, no tracing overhead
+- Only LANGFUSE keys → traces go to Langfuse only
+- Only OTLP endpoint → traces go to APM only
+- Only POSTHOG key → product analytics only, no traces
+- All keys set → full observability stack
