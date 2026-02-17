@@ -84,3 +84,126 @@ Your optimized response here...
 - Unclear/low-complex → HF Mixtral-8x7B
 - Heartbeat ALWAYS → JSON via free tier
 - Error → "Reroute to Claude Opus 4.6"
+
+---
+
+## Infrastructure Routing (Workload → Platform)
+
+**You have 4 compute platforms. Route every workload to the cheapest platform that can handle it.**
+
+### Platform Matrix
+```
+RAILWAY (always-on, this container)
+├─ CPU: shared vCPU, 512MB–8GB RAM
+├─ Best for: gateway, web server, cron, lightweight CLI tasks
+├─ Cost: ~$5–20/mo fixed
+├─ Latency: <50ms (local process)
+└─ Limits: no GPU, 8GB RAM ceiling, ephemeral filesystem (use /data volume)
+
+MODAL (serverless GPU/compute, on-demand)
+├─ GPU: A10G, A100, H100 on demand
+├─ CPU: up to 64 cores, 256GB RAM
+├─ Best for: ML inference, batch processing, image/video gen, data pipelines
+├─ Cost: pay-per-second ($0.000164/s CPU → $4.76/hr H100)
+├─ Latency: ~1–5s cold start, <100ms warm
+└─ Limits: 60min max per function, needs MODAL_TOKEN_ID/SECRET
+
+N8N (workflow automation, separate Railway service)
+├─ Best for: multi-step orchestration, scheduled jobs, webhook chains
+├─ Connects: 400+ integrations (Slack, Gmail, Sheets, DBs, APIs)
+├─ Cost: included in Railway plan (runs as service)
+├─ Latency: ~200ms per node execution
+└─ Limits: not for compute-heavy work, use for glue/orchestration
+
+COMPOSIO RUBE MCP (SaaS integration layer)
+├─ Best for: direct SaaS actions (send email, create issue, update CRM)
+├─ Connects: 500+ apps via OAuth (Gmail, Slack, Notion, GitHub, Linear, etc.)
+├─ Cost: Composio free tier → paid plans
+├─ Latency: ~500ms–2s per action (API round-trip)
+└─ Limits: no compute, pure API bridge
+```
+
+### INFRA DECISION TREE
+```
+CLASSIFY workload → pick platform → pick model → execute
+
+A. SaaS ACTION (send email, post Slack, create Jira, update Notion)
+   └── Composio Rube MCP (direct API, no compute needed)
+       Model: any (just routing the action)
+
+B. MULTI-STEP ORCHESTRATION (if X then Y, scheduled pipeline, fan-out)
+   └── n8n workflow via webhook
+       POST http://Primary.railway.internal:5678/webhook/{workflow-id}
+       Model: n8n AI Agent node uses configured LLM
+
+C. GPU / HEAVY COMPUTE (ML inference, embeddings, image gen, video, batch)
+   └── Modal serverless function
+       modal run script.py  OR  modal deploy
+       Model: run on Modal GPU, orchestrate from Railway
+
+D. LIGHTWEIGHT / REALTIME (CLI tools, file ops, git, search, chat)
+   └── Railway local (this container)
+       Direct execution via OpenClaw gateway
+       Model: per ESCALATION DECISION TREE above
+
+E. HYBRID (e.g., "research topic then email summary to team")
+   └── Railway (brain) → Modal (heavy lift) → n8n (delivery) → Composio (send)
+```
+
+### ROUTING EXAMPLES
+```
+"Send a Slack message about today's metrics"
+  → INFRA: Composio Rube MCP (SaaS action)
+  → MODEL: free tier (just routing)
+
+"Generate 100 product thumbnails from descriptions"
+  → INFRA: Modal (GPU batch, A10G)
+  → MODEL: Qwen 3.5 VL on Modal
+
+"Every morning at 8am, pull HubSpot deals and email a summary"
+  → INFRA: n8n (scheduled workflow)
+  → NODES: Schedule Trigger → HubSpot → AI Agent → Gmail
+
+"Fix the auth bug in src/middleware.ts"
+  → INFRA: Railway local (lightweight coding)
+  → MODEL: Claude Opus 4.6 (SOTA coding)
+
+"Train a classifier on this CSV and deploy as an API"
+  → INFRA: Modal (GPU training + serving)
+  → MODEL: orchestrate from Railway, compute on Modal H100
+
+"Research competitor pricing, build a report, email to team"
+  → INFRA: Railway (research/LLM) → Modal (if data-heavy) → Composio (email)
+  → MODEL: Claude Opus 4.6 (brain) + free tier (delivery)
+
+"Process 10K invoices from Google Drive and update Salesforce"
+  → INFRA: n8n (orchestration) → Modal (OCR/extraction) → Composio (Salesforce)
+  → MODEL: n8n AI nodes for classification, Modal for compute
+```
+
+### INFRA ROUTING PROTOCOL
+```
+1. CLASSIFY workload: SaaS action | orchestration | GPU/heavy | lightweight | hybrid
+2. SELECT platform(s) per decision tree
+3. SELECT model per ESCALATION DECISION TREE
+4. ALWAYS prefix infra route:
+   [INFRA: Platform(s) | MODEL: Name (provider) | REASON]
+5. For hybrid, show the pipeline:
+   [INFRA: Railway→Modal→n8n→Composio | PIPELINE: research→compute→orchestrate→deliver]
+6. COST estimate: platform cost + model cost
+```
+
+### INFRA RESPONSE FORMAT
+```
+[INFRA: Modal (A10G GPU) | MODEL: Qwen 3.5 VL | Image batch generation]
+
+Your response here...
+
+[Cost: ~$0.12 Modal GPU + $0.002 model | Pipeline: Railway orchestrate → Modal compute]
+```
+
+### INFRA FALLBACKS
+- No MODAL_TOKEN → fall back to Railway CPU (warn about speed)
+- No COMPOSIO_API_KEY → fall back to direct API calls or n8n integrations
+- n8n unreachable → execute sequentially on Railway
+- GPU task on Railway → warn and suggest Modal: "This would be 10x faster on Modal GPU"
