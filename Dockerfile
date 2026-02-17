@@ -73,8 +73,9 @@ RUN git clone --depth 1 https://github.com/mvanhorn/last30days-skill.git /root/.
 
 COPY src ./src
 COPY workspace ./workspace
+COPY scripts ./scripts
 COPY start.sh ./start.sh
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.sh /app/scripts/*.sh
 
 # Create tailscale state directory
 RUN mkdir -p /data/tailscale

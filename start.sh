@@ -49,5 +49,22 @@ if [ -n "$GITHUB_TOKEN" ]; then
   echo "[github] Credentials configured"
 fi
 
+# --- OpenClaw Hot Update ---
+# Set OPENCLAW_UPDATE_REF to update OpenClaw at boot without rebuilding the Docker image.
+# Supports: --stable, --beta, --canary, or any branch/tag/SHA.
+if [ -n "$OPENCLAW_UPDATE_REF" ]; then
+  echo "[update] Updating OpenClaw to: $OPENCLAW_UPDATE_REF"
+  if /app/scripts/update-openclaw.sh "$OPENCLAW_UPDATE_REF"; then
+    export OPENCLAW_ENTRY=/data/openclaw/dist/entry.js
+    echo "[update] OpenClaw updated successfully"
+  else
+    echo "[update] Update failed, using built-in version"
+  fi
+elif [ -f /data/openclaw/dist/entry.js ]; then
+  # A previous update exists on the volume — use it automatically.
+  export OPENCLAW_ENTRY=/data/openclaw/dist/entry.js
+  echo "[update] Using previously updated OpenClaw from /data/openclaw"
+fi
+
 # --- Start OpenClaw ---
 exec node --import /app/src/instrumentation.mjs /app/src/server.js

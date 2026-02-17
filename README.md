@@ -62,6 +62,7 @@ In Railway's Variables tab, set:
 | `POSTHOG_API_KEY` | No | PostHog project API key for product analytics |
 | `POSTHOG_HOST` | No | PostHog ingest host (default: `https://us.i.posthog.com`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | Generic OTLP endpoint for APM (Grafana, Jaeger, etc.) |
+| `OPENCLAW_UPDATE_REF` | No | Update OpenClaw at boot: `--stable`, `--beta`, `--canary`, or any branch/tag/SHA |
 | `OPENCLAW_STATE_DIR` | No | State directory (default: `/data/.openclaw`) |
 | `OPENCLAW_WORKSPACE_DIR` | No | Workspace directory (default: `/data/workspace`) |
 
@@ -333,12 +334,38 @@ The `/setup` page provides:
 
 ### Updating OpenClaw
 
-Redeploy from Railway to pull the latest OpenClaw `main` branch. Your config and workspace persist on the `/data` volume.
+There are three ways to update OpenClaw, from heaviest to lightest:
 
-To pin a specific version, set the build argument:
+**1. Docker rebuild** (full rebuild, ~10 min)
+
+Redeploy from Railway to pull the latest OpenClaw `main` branch. Pin a specific version with the build arg:
 ```
 OPENCLAW_GIT_REF=v2026.2.12
 ```
+
+**2. Boot-time update** (no rebuild, updates on container start)
+
+Set the `OPENCLAW_UPDATE_REF` environment variable in Railway. The container clones, builds, and starts the updated version automatically:
+
+```bash
+# Channel flags
+OPENCLAW_UPDATE_REF=--stable    # Latest release tag (v*)
+OPENCLAW_UPDATE_REF=--beta      # Latest pre-release tag (v*-beta*, v*-rc*)
+OPENCLAW_UPDATE_REF=--canary    # Latest main branch commit
+
+# Or pin to a specific ref
+OPENCLAW_UPDATE_REF=v2026.3.1   # Specific tag
+OPENCLAW_UPDATE_REF=main        # Branch
+OPENCLAW_UPDATE_REF=fix/auth    # Feature branch
+```
+
+The update is stored on the `/data` volume. On subsequent restarts, the updated version is used automatically even without the env var set. Remove the env var after the first update to avoid re-building every boot.
+
+**3. Live update from debug console** (no restart needed)
+
+Open `/setup`, go to the Debug console, select `openclaw.update`, and enter a ref (`--stable`, `--beta`, `--canary`, or any branch/tag/SHA). The gateway restarts automatically with the new version — zero downtime.
+
+Your config and workspace always persist on the `/data` volume. The original OpenClaw in the Docker image is never modified and serves as a fallback if an update fails.
 
 ## Troubleshooting
 
@@ -392,7 +419,9 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 ```
 .
 ├── Dockerfile                  # Multi-stage build: OpenClaw from source + Tailscale + tools
-├── start.sh                    # Entrypoint: Tailscale → GitHub creds → OTel instrumentation → server
+├── scripts/
+│   └── update-openclaw.sh      # Hot-update script: clone/build OpenClaw to /data without Docker rebuild
+├── start.sh                    # Entrypoint: Tailscale → GitHub creds → hot update → OTel → server
 ├── railway.toml                # Railway deployment config (healthcheck, restart policy)
 ├── package.json                # Node.js dependencies (Express, OTel, PostHog, Langfuse)
 ├── .env.example                # Template for all environment variables

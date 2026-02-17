@@ -55,6 +55,9 @@ start.sh
   ├── Start Tailscale daemon (if TAILSCALE_AUTHKEY set)
   ├── Join tailnet with --authkey
   ├── Configure GitHub credentials (if GITHUB_TOKEN set)
+  ├── Hot-update OpenClaw (if OPENCLAW_UPDATE_REF set)
+  │     └── scripts/update-openclaw.sh → clone/build to /data/openclaw
+  ├── Auto-detect previous update (if /data/openclaw/dist/entry.js exists)
   └── exec node --import instrumentation.mjs server.js
          ├── instrumentation.mjs runs first (OTel SDK, OpenLLMetry)
          └── server.js starts Express on :8080
@@ -86,8 +89,9 @@ Internet → Railway :8080 → Express (server.js)
 | `src/server.js` | ~1400 | Express wrapper: setup wizard, health checks, config editor, debug console, backup/restore, gateway proxy, PostHog analytics |
 | `src/instrumentation.mjs` | ~95 | OpenTelemetry SDK: registers Langfuse + OTLP span processors, OpenLLMetry for LLM SDK auto-instrumentation |
 | `src/setup-app.js` | ~350 | Browser-side JS for the `/setup` wizard UI (vanilla JS, no framework) |
-| `start.sh` | ~53 | Container entrypoint: Tailscale, GitHub creds, exec server |
-| `Dockerfile` | ~85 | Multi-stage build: OpenClaw from source, runtime with Tailscale + tools |
+| `start.sh` | ~70 | Container entrypoint: Tailscale, GitHub creds, hot update, exec server |
+| `scripts/update-openclaw.sh` | ~160 | Hot-update script: resolve channel flags, clone/build to /data/openclaw |
+| `Dockerfile` | ~86 | Multi-stage build: OpenClaw from source, runtime with Tailscale + tools |
 | `workspace/AGENTS.md` | ~260 | Default system prompt: multi-model routing, infra routing, observability |
 
 ### server.js Structure
@@ -145,6 +149,24 @@ The `AGENTS.md` system prompt defines a decision tree that routes workloads to t
 | GPU/heavy compute | Modal serverless |
 | Lightweight/realtime | Railway local |
 | Hybrid pipelines | Railway brain + Modal muscle + n8n glue + Composio delivery |
+
+### Hot-Update Mechanism
+
+OpenClaw can be updated at runtime without rebuilding the Docker image. The mechanism has three layers:
+
+**Boot-time update** (`start.sh`):
+When `OPENCLAW_UPDATE_REF` is set, `start.sh` calls `scripts/update-openclaw.sh` before starting the server. If the build succeeds, `OPENCLAW_ENTRY` is set to `/data/openclaw/dist/entry.js`. If it fails, the baked-in `/openclaw` is used as a fallback.
+
+**Auto-detect previous update** (`start.sh`):
+If `/data/openclaw/dist/entry.js` exists from a previous update (and `OPENCLAW_UPDATE_REF` is not set), the server automatically uses it. This means updates persist across container restarts.
+
+**Live update** (`server.js` debug console):
+The `openclaw.update` console command runs the same update script on-demand. After a successful build, it sets `process.env.OPENCLAW_ENTRY` and calls `restartGateway()` for zero-downtime swaps.
+
+**Channel flags** (`scripts/update-openclaw.sh`):
+The update script accepts `--stable` (latest `v*` release tag), `--beta` (latest `v*-beta*` or `v*-rc*` tag), `--canary` (latest `main` commit), or any branch/tag/SHA. It resolves channel flags via `git ls-remote --tags` to avoid cloning the entire repo just to find a tag.
+
+**Key invariant**: The original `/openclaw` directory in the Docker image is never modified. It always serves as a fallback.
 
 ## Adding Features
 
