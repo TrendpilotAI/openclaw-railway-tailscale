@@ -48,6 +48,9 @@ In Railway's Variables tab, set:
 | `GITHUB_TOKEN` | No | GitHub PAT for repo access from the instance |
 | `OPENCLAW_GATEWAY_TOKEN` | No | Gateway auth token (auto-generated if not set) |
 | `OPENCLAW_HOOKS_TOKEN` | No | Shared secret for webhook auth (OpenClaw <-> n8n) |
+| `COMPOSIO_API_KEY` | No | Composio API key for Rube MCP (500+ SaaS integrations) |
+| `MODAL_TOKEN_ID` | No | Modal token ID for serverless GPU/compute tasks |
+| `MODAL_TOKEN_SECRET` | No | Modal token secret (pair with `MODAL_TOKEN_ID`) |
 | `OPENCLAW_STATE_DIR` | No | State directory (default: `/data/.openclaw`) |
 | `OPENCLAW_WORKSPACE_DIR` | No | Workspace directory (default: `/data/workspace`) |
 
@@ -136,6 +139,83 @@ Content-Type: application/json
 ```
 
 Set `OPENCLAW_HOOKS_TOKEN` on the OpenClaw service to enable webhook auth.
+
+## Pre-Installed Skills & Tools
+
+This template ships with default skills and CLI tools so your OpenClaw instance is productive from the first boot.
+
+### Skills (copied to workspace on first setup)
+
+**Railway (platform management):**
+
+| Skill | What it does |
+|---|---|
+| **railway-deploy** | Deploy code with `railway up` — detach and CI modes, service targeting |
+| **railway-status** | Check project status, services, deployments, and domains |
+| **railway-environment** | Query and apply config changes — variables, build/deploy settings, replicas |
+| **railway-service** | Service management — status, rename, Docker image deploys |
+| **railway-database** | Add Postgres, Redis, MySQL, MongoDB with connection wiring |
+| **railway-domain** | Add/remove Railway and custom domains, DNS configuration |
+| **railway-projects** | List, switch, and configure Railway projects and workspaces |
+
+**n8n (workflow automation):**
+
+| Skill | What it does |
+|---|---|
+| **n8n-workflow-patterns** | 5 core patterns: webhook, HTTP API, database, AI agent, scheduled tasks |
+| **n8n-code-javascript** | Write JavaScript in n8n Code nodes — `$input`/`$json` syntax, modes, patterns |
+| **n8n-code-python** | Write Python in n8n Code nodes — `_input`/`_json` syntax, stdlib-only |
+| **n8n-node-configuration** | Operation-aware node config — property dependencies, progressive discovery |
+| **n8n-expression-syntax** | Expression syntax (`{{$json.field}}`), variable access, webhook data structure |
+| **n8n-mcp-tools** | MCP tool selection guide — node search, validation, workflow management |
+| **n8n-validation** | Interpret and fix validation errors — severity levels, the validate-fix loop |
+
+**Development & DevOps:**
+
+| Skill | What it does |
+|---|---|
+| **coding-agent** | Run Codex CLI, Claude Code, OpenCode, or Pi in background processes with PTY support |
+| **pr-creator** | Create pull requests following repo templates and Conventional Commits |
+| **test-driven-development** | TDD workflow: red-green-refactor cycle for all features and bugfixes |
+| **writing-plans** | Write comprehensive implementation plans with bite-sized TDD tasks |
+
+**Communication & Productivity:**
+
+| Skill | What it does |
+|---|---|
+| **gog** | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Sheets, Docs |
+| **himalaya** | CLI email client via IMAP/SMTP — read, write, reply, search, organize |
+| **wacli** | WhatsApp CLI — send messages, search history, sync conversations |
+| **jira** | Jira issue management — view, create, transition, comment via CLI or MCP |
+
+**Research & Analytics:**
+
+| Skill | What it does |
+|---|---|
+| **last30days** | Research any topic across Reddit, X, YouTube, and the web from the last 30 days |
+| **data-storytelling** | Transform data into compelling narratives for executive presentations |
+| **visualization-expert** | Chart selection and data visualization guidance |
+| **project-planner** | Break down projects into tasks with timelines, dependencies, milestones |
+| **strategy-advisor** | High-level strategic thinking and business decision guidance |
+
+**Content & Creative:**
+
+| Skill | What it does |
+|---|---|
+| **changelog-social** | Generate Discord, Twitter, LinkedIn announcements from changelogs |
+| **scientific-slides** | Build slide decks for conferences, seminars, thesis defenses |
+| **viral-generator-builder** | Build shareable quiz makers, name generators, personality tests |
+
+### CLI Tools (pre-installed in Docker image)
+
+| Tool | Purpose |
+|---|---|
+| **Rube MCP** (`@composio/rube-mcp`) | Composio universal MCP server — 500+ SaaS integrations (Gmail, Slack, Notion, GitHub, etc.) |
+| **Bird CLI** (`@steipete/bird`) | Fast X/Twitter search via GraphQL (cookie auth, no API key needed for reading) |
+| **yt-dlp** | YouTube video metadata and transcript extraction |
+| **gog** | Installable via Homebrew (`brew install steipete/tap/gogcli`) at runtime |
+
+Skills are automatically copied to your workspace on first setup. You can add more skills by placing SKILL.md files in your workspace's `skills/` directory.
 
 ## Cost Optimization (Applied Automatically)
 
@@ -246,10 +326,12 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage build: compiles OpenClaw from source, installs Tailscale |
+| `Dockerfile` | Multi-stage build: compiles OpenClaw from source, installs Tailscale + Bird + yt-dlp |
 | `start.sh` | Entrypoint: starts Tailscale, configures GitHub creds, launches server |
 | `src/server.js` | Express wrapper: setup wizard, health checks, gateway proxy |
 | `src/setup-app.js` | Browser JS for the `/setup` wizard UI |
+| `workspace/AGENTS.md` | Default multi-model routing system prompt |
+| `workspace/skills/` | Default skills: coding-agent, pr-creator, gog, last30days |
 | `railway.toml` | Railway deployment configuration |
 | `.env.example` | Template for required environment variables |
 

@@ -61,6 +61,16 @@ COPY --from=openclaw-build /openclaw /openclaw
 RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"' > /usr/local/bin/openclaw \
   && chmod +x /usr/local/bin/openclaw
 
+# Install Bird CLI (X/Twitter search via GraphQL), yt-dlp (YouTube transcripts),
+# and Composio Rube MCP server (500+ SaaS integrations)
+RUN npm install -g @steipete/bird @composio/rube-mcp \
+  && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+  && chmod +x /usr/local/bin/yt-dlp \
+  && pip3 install --break-system-packages modal
+
+# Clone /last30days research skill
+RUN git clone --depth 1 https://github.com/mvanhorn/last30days-skill.git /root/.claude/skills/last30days
+
 COPY src ./src
 COPY workspace ./workspace
 COPY start.sh ./start.sh
