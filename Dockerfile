@@ -71,6 +71,8 @@ RUN npm install -g @steipete/bird @composio/rube-mcp \
 # Clone /last30days research skill
 RUN git clone --depth 1 https://github.com/mvanhorn/last30days-skill.git /root/.claude/skills/last30days
 
+# Bust Docker cache when code changes (set CACHEBUST=$RAILWAY_DEPLOYMENT_ID)
+ARG CACHEBUST=1
 COPY src ./src
 COPY workspace ./workspace
 COPY scripts ./scripts
