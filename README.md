@@ -11,7 +11,7 @@ Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io
 - Connects OpenClaw to n8n via webhooks for AI-triggered workflows
 - Routes workloads across 4 platforms: Railway (gateway), Modal (GPU), n8n (orchestration), Composio (SaaS)
 - Wraps everything in a Tailscale encrypted mesh network (WireGuard)
-- Ships 30+ skills, 4 CLI tools, and 500+ SaaS integrations out of the box
+- Ships 39 skills, 3 CLI tools, and 500+ SaaS integrations out of the box
 - Provides OpenTelemetry tracing with Langfuse (LLM evals) and PostHog (product analytics)
 - Applies cost-optimized defaults that reduce API spend by 90%+
 - Provides a browser-based setup wizard at `/setup` for onboarding
@@ -75,7 +75,7 @@ Once deployed, open your Railway service URL and navigate to `/setup`. Enter the
 3. Optionally configure Telegram, Discord, or Slack channels
 4. Click "Run setup"
 
-The wizard runs `openclaw onboard` non-interactively, applies cost-optimized defaults, copies 30+ skills to your workspace, and starts the gateway.
+The wizard runs `openclaw onboard` non-interactively, applies cost-optimized defaults, copies 39 skills to your workspace, and starts the gateway.
 
 ### 4. Wire Up n8n Webhooks
 
@@ -150,16 +150,16 @@ Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 
 ### Services
 
-| Service | Role |
-|---|---|
-| **OpenClaw** | AI assistant gateway with setup wizard, proxied through Express |
-| **n8n Primary** | Workflow automation engine with AI agent nodes |
-| **n8n Worker** | Queue-based execution for heavy workflows |
-| **PostgreSQL** | Persistent storage for n8n workflows and credentials |
-| **Redis** | Queue backend for distributed n8n execution |
-| **Tailscale** | Encrypted mesh networking (userspace, no root required) |
-| **Modal** (external) | Serverless GPU/compute for ML inference, batch processing, image/video gen |
-| **Composio** (external) | Universal MCP server for 500+ SaaS integrations (Gmail, Slack, Notion, etc.) |
+| Service | Railway? | Role |
+|---|---|---|
+| **OpenClaw** | Yes | AI assistant gateway with setup wizard, proxied through Express |
+| **n8n Primary** | Yes | Workflow automation engine with AI agent nodes |
+| **PostgreSQL** | Yes | Persistent storage for n8n workflows and credentials |
+| **Redis** | Yes | Queue backend for n8n execution |
+| **Postiz** | Yes | Open-source social media scheduling and automation ([postiz.com](https://postiz.com)) |
+| **Tailscale** | Embedded | Encrypted mesh networking (userspace, runs inside OpenClaw container) |
+| **Modal** | External | Serverless GPU/compute for ML inference, batch processing, image/video gen |
+| **Composio** | External | Universal MCP server for 500+ SaaS integrations (Gmail, Slack, Notion, etc.) |
 
 ### How OpenClaw Connects to n8n
 
@@ -208,7 +208,7 @@ The template routes workloads across 4 compute platforms automatically. See `wor
 
 ## Pre-Installed Skills & Tools
 
-This template ships with 30+ skills and 4 CLI tools so your OpenClaw instance is productive from the first boot. Skills are automatically copied to your workspace on first setup.
+This template ships with 39 skills and 3 CLI tools so your OpenClaw instance is productive from the first boot. Skills are automatically copied to your workspace on first setup.
 
 ### Skills (copied to workspace on first setup)
 
@@ -278,10 +278,9 @@ This template ships with 30+ skills and 4 CLI tools so your OpenClaw instance is
 | Tool | Purpose |
 |---|---|
 | **Rube MCP** (`@composio/rube-mcp`) | Composio universal MCP server — 500+ SaaS integrations (Gmail, Slack, Notion, GitHub, etc.) |
-| **Bird CLI** (`@steipete/bird`) | Fast X/Twitter search via GraphQL (cookie auth, no API key needed for reading) |
 | **yt-dlp** | YouTube video metadata and transcript extraction |
 | **Modal** (`modal`) | Serverless GPU/compute CLI — deploy functions, run batch jobs on A10G/A100/H100 |
-| **Homebrew** | Available at runtime for installing additional CLI tools (e.g. `brew install steipete/tap/gogcli`) |
+| **Homebrew** | Available at runtime for installing additional CLI tools (e.g. `brew install gogcli`) |
 
 You can add more skills by placing `SKILL.md` files in your workspace's `skills/` directory.
 
