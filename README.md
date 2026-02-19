@@ -4,17 +4,34 @@ Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.app/template/TEMPLATE_ID?referralCode=YOUR_CODE)
 
-## What This Does
+## What This Deploys
 
-- Builds OpenClaw from source and runs the AI gateway on Railway
-- Deploys n8n with PostgreSQL and Redis for workflow automation
-- Connects OpenClaw to n8n via webhooks for AI-triggered workflows
-- Routes workloads across 4 platforms: Railway (gateway), Modal (GPU), n8n (orchestration), Composio (SaaS)
-- Wraps everything in a Tailscale encrypted mesh network (WireGuard)
-- Ships 39 skills, 3 CLI tools, and 500+ SaaS integrations out of the box
-- Provides OpenTelemetry tracing with Langfuse (LLM evals) and PostHog (product analytics)
-- Applies cost-optimized defaults that reduce API spend by 90%+
-- Provides a browser-based setup wizard at `/setup` for onboarding
+One click deploys the full stack. All companion services are pre-wired with Railway reference variables — no manual secret sharing or internal URLs to configure.
+
+### Core (always deployed)
+
+| Service | Source | Purpose |
+|---|---|---|
+| **OpenClaw** | This repo (Dockerfile) | AI gateway with setup wizard, Tailscale mesh, and 4-platform compute routing |
+
+### Companion Services (optional — delete any you don't need)
+
+| Service | Image | Purpose | Depends On |
+|---|---|---|---|
+| **n8n Primary** | `n8nio/n8n` | Workflow automation engine with AI agent nodes | Postgres, Redis |
+| **n8n Worker** | `n8nio/n8n` | Background workflow execution (queue mode) | n8n Primary, Postgres, Redis |
+| **Postgres** | `postgres-ssl:17` | Persistent storage for n8n, Postiz, and Temporal | -- |
+| **Redis** | `redis:8.2.1` | Queue/cache backend for n8n and Postiz | -- |
+| **Postiz** | `postiz-app` | Social media scheduling and automation | Postgres, Redis |
+| **Temporal** | `temporalio/auto-setup` | Distributed workflow orchestration | Postgres |
+
+### Also included
+
+- Tailscale encrypted mesh networking (embedded in OpenClaw container)
+- 39 skills, 3 CLI tools, and 500+ SaaS integrations (via Composio) out of the box
+- OpenTelemetry tracing with Langfuse (LLM evals) and PostHog (product analytics)
+- Cost-optimized defaults that reduce API spend by 90%+
+- Browser-based setup wizard at `/setup` for onboarding
 
 ## Prerequisites
 
@@ -38,33 +55,15 @@ Click the deploy button above, or:
 
 ### 2. Set Environment Variables
 
-In Railway's Variables tab, set:
+The template auto-generates secrets and wires all cross-service connections via Railway reference variables. You only need to fill in:
 
 | Variable | Required | Description |
 |---|---|---|
 | `SETUP_PASSWORD` | Yes | Password to access the `/setup` wizard |
 | `TAILSCALE_AUTHKEY` | Yes | Tailscale auth key (reusable + ephemeral) |
-| `TAILSCALE_HOSTNAME` | No | Tailnet hostname (default: `openclaw-railway`) |
-| `TAILSCALE_SERVE` | No | Enable Tailscale Serve HTTPS proxy (default: `true`) |
-| `ANTHROPIC_API_KEY` | No | Set here or enter during setup wizard |
-| `OPENAI_API_KEY` | No | Alternative LLM provider |
-| `OPENROUTER_API_KEY` | No | Multi-model routing via OpenRouter |
-| `GITHUB_TOKEN` | No | GitHub PAT for repo access from the instance |
-| `OPENCLAW_GATEWAY_TOKEN` | No | Gateway auth token (auto-generated if not set) |
-| `OPENCLAW_HOOKS_TOKEN` | No | Shared secret for webhook auth (OpenClaw <-> n8n) |
-| `N8N_WEBHOOK_URL` | No | n8n internal URL (e.g. `http://Primary.railway.internal:5678`) |
-| `COMPOSIO_API_KEY` | No | Composio API key for Rube MCP (500+ SaaS integrations) |
-| `MODAL_TOKEN_ID` | No | Modal token ID for serverless GPU/compute tasks |
-| `MODAL_TOKEN_SECRET` | No | Modal token secret (pair with `MODAL_TOKEN_ID`) |
-| `LANGFUSE_PUBLIC_KEY` | No | Langfuse public key for LLM tracing and evals |
-| `LANGFUSE_SECRET_KEY` | No | Langfuse secret key |
-| `LANGFUSE_BASEURL` | No | Langfuse host (default: `https://cloud.langfuse.com`) |
-| `POSTHOG_API_KEY` | No | PostHog project API key for product analytics |
-| `POSTHOG_HOST` | No | PostHog ingest host (default: `https://us.i.posthog.com`) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | Generic OTLP endpoint for APM (Grafana, Jaeger, etc.) |
-| `OPENCLAW_UPDATE_REF` | No | Update OpenClaw at boot: `--stable`, `--beta`, `--canary`, or any branch/tag/SHA |
-| `OPENCLAW_STATE_DIR` | No | State directory (default: `/data/.openclaw`) |
-| `OPENCLAW_WORKSPACE_DIR` | No | Workspace directory (default: `/data/workspace`) |
+| `ANTHROPIC_API_KEY` | Recommended | Set here or enter during setup wizard |
+
+Everything else is optional and pre-configured with sensible defaults. For the full list of OpenClaw environment variables, see [`.env.example`](.env.example).
 
 ### 3. Run Setup
 
@@ -77,39 +76,7 @@ Once deployed, open your Railway service URL and navigate to `/setup`. Enter the
 
 The wizard runs `openclaw onboard` non-interactively, applies cost-optimized defaults, copies 39 skills to your workspace, and starts the gateway.
 
-### 4. Wire Up n8n Webhooks
-
-OpenClaw and n8n communicate over Railway's private network. Generate a shared secret and set the internal URLs on both services:
-
-```bash
-# Generate a shared secret
-openssl rand -hex 32
-```
-
-**On the OpenClaw service** (Railway Variables tab):
-
-| Variable | Value |
-|---|---|
-| `N8N_WEBHOOK_URL` | `http://Primary.railway.internal:5678` |
-| `OPENCLAW_HOOKS_TOKEN` | *(paste the generated secret)* |
-
-**On the n8n (Primary) service** (Railway Variables tab):
-
-| Variable | Value |
-|---|---|
-| `OPENCLAW_HOOKS_TOKEN` | *(same secret as above)* |
-| `DB_TYPE` | `postgresdb` |
-| `DB_POSTGRESDB_HOST` | `postgres.railway.internal` |
-| `DB_POSTGRESDB_PORT` | `5432` |
-| `DB_POSTGRESDB_DATABASE` | `railway` |
-| `DB_POSTGRESDB_USER` | `postgres` |
-| `DB_POSTGRESDB_PASSWORD` | *(from your Railway PostgreSQL service)* |
-| `WEBHOOK_URL` | `https://<your-n8n-domain>.up.railway.app` |
-| `N8N_EDITOR_BASE_URL` | `https://<your-n8n-domain>.up.railway.app` |
-
-Redeploy n8n after setting these variables. On first successful connection, n8n auto-creates all required database tables.
-
-### 5. Connect from Your Local Machine
+### 4. Connect from Your Local Machine
 
 With Tailscale installed on your Mac/PC, the Railway instance appears on your tailnet:
 
@@ -123,24 +90,48 @@ tailscale status | grep openclaw
 
 Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 
+## Removing Optional Services
+
+After deploying, you can delete any companion services you don't need from the Railway dashboard. This reduces cost and simplifies your project.
+
+| Service | Safe to Delete? | Impact if Deleted |
+|---|---|---|
+| **OpenClaw** | No | Core service — everything depends on it |
+| **n8n Primary** | Yes | No workflow automation. Also delete Worker. |
+| **n8n Worker** | Yes | Primary handles all execution (slower but functional) |
+| **Postgres** | Only if n8n, Postiz, and Temporal are also deleted | Required by n8n, Postiz, and Temporal |
+| **Redis** | Only if n8n and Postiz are also deleted | Required by n8n queue mode and Postiz |
+| **Postiz** | Yes | No social media scheduling |
+| **Temporal** | Yes | No distributed workflow orchestration. Postiz v2.12+ falls back to BullMQ. |
+
+**Common configurations:**
+
+- **OpenClaw only** — Delete n8n Primary, n8n Worker, Postgres, Redis, Postiz, Temporal
+- **OpenClaw + n8n** — Delete Postiz, Temporal
+- **Full stack** — Keep everything
+
 ## Architecture
 
 ```
-                          Railway Private Network
-  ┌─────────────────────────────────────────────────────────────────┐
-  │                                                                 │
-  │  ┌──────────────────┐     webhooks      ┌───────────────────┐  │
-  │  │  OpenClaw          │◄───────────────►│  n8n Primary       │  │
-  │  │  Express :8080     │  /hooks/agent    │  :5678             │  │
-  │  │  Gateway :18789    │  /hooks/wake     │                    │  │
-  │  │  Tailscale         │                  │  n8n Worker        │  │
-  │  │  OTel + PostHog    │                  └──────┬─────────────┘  │
-  │  └────────┬───────────┘                         │               │
-  │           │                              ┌──────┴──────┐        │
-  │      /data volume                        │  PostgreSQL  │        │
-  │   (config + workspace)                   │  Redis       │        │
-  │                                          └─────────────┘        │
-  └─────────────────────────────────────────────────────────────────┘
+                              Railway Private Network
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │                                                                       │
+  │  ┌──────────────────┐     webhooks      ┌────────────────────────┐   │
+  │  │  OpenClaw          │◄───────────────►│  n8n Primary :5678      │   │
+  │  │  Express :8080     │  /hooks/agent    │  n8n Worker             │   │
+  │  │  Gateway :18789    │  /hooks/wake     └───────────┬────────────┘   │
+  │  │  Tailscale         │                              │                │
+  │  │  OTel + PostHog    │                       ┌──────┴──────┐         │
+  │  └────────┬───────────┘                       │  PostgreSQL  │         │
+  │           │                                   │  Redis       │         │
+  │      /data volume                             └──────┬──────┘         │
+  │   (config + workspace)                     ┌─────────┼─────────┐      │
+  │                                            │                   │      │
+  │                                    ┌───────┴──────┐  ┌─────────┴───┐  │
+  │                                    │  Postiz       │  │  Temporal    │  │
+  │                                    │  :5000        │  │  gRPC :7233  │  │
+  │                                    └──────────────┘  └─────────────┘  │
+  └───────────────────────────────────────────────────────────────────────┘
               │                         │                    │
               │ Tailscale (WireGuard)   │ HTTPS API          │ OAuth
               ▼                         ▼                    ▼
@@ -150,25 +141,32 @@ Your local OpenClaw CLI can now connect to the remote gateway over Tailscale.
 
 ### Services
 
-| Service | Railway? | Role |
-|---|---|---|
-| **OpenClaw** | Yes | AI assistant gateway with setup wizard, proxied through Express |
-| **n8n Primary** | Yes | Workflow automation engine with AI agent nodes |
-| **PostgreSQL** | Yes | Persistent storage for n8n workflows and credentials |
-| **Redis** | Yes | Queue backend for n8n execution |
-| **Postiz** | Yes | Open-source social media scheduling and automation ([postiz.com](https://postiz.com)) |
-| **Tailscale** | Embedded | Encrypted mesh networking (userspace, runs inside OpenClaw container) |
-| **Modal** | External | Serverless GPU/compute for ML inference, batch processing, image/video gen |
-| **Composio** | External | Universal MCP server for 500+ SaaS integrations (Gmail, Slack, Notion, etc.) |
+All Railway services below are deployed by the template and wired together automatically via [reference variables](https://docs.railway.com/variables#reference-variables). The multi-service template is defined in the Railway dashboard (not in `railway.toml`, which only configures the OpenClaw service's build/deploy settings).
+
+| Service | Type | Role | Optional? |
+|---|---|---|---|
+| **OpenClaw** | GitHub repo (this repo) | AI assistant gateway with setup wizard, proxied through Express | No |
+| **n8n Primary** | Docker image | Workflow automation engine with AI agent nodes | Yes |
+| **n8n Worker** | Docker image | Background workflow execution in queue mode | Yes |
+| **Postgres** | Docker image | Persistent storage for n8n, Postiz, and Temporal | If n8n/Postiz deleted |
+| **Redis** | Docker image | Queue/cache backend for n8n and Postiz | If n8n/Postiz deleted |
+| **Postiz** | Docker image | Social media scheduling ([postiz.com](https://postiz.com)) | Yes |
+| **Temporal** | Docker image | Distributed workflow orchestration | Yes |
+| **Tailscale** | Embedded | Encrypted mesh networking (runs inside OpenClaw container) | -- |
+| **Modal** | External API | Serverless GPU/compute for ML inference, batch processing | -- |
+| **Composio** | External API | Universal MCP server for 500+ SaaS integrations | -- |
 
 ### How OpenClaw Connects to n8n
 
-OpenClaw and n8n communicate via webhooks over Railway's private network:
+The template auto-wires OpenClaw and n8n via Railway reference variables:
+
+- `OPENCLAW_HOOKS_TOKEN` — auto-generated shared secret, injected into both services
+- `N8N_WEBHOOK_URL` — set to `http://${{n8n Primary.RAILWAY_PRIVATE_DOMAIN}}:5678` on OpenClaw
 
 **n8n triggering OpenClaw** (run AI from a workflow):
 ```bash
 # n8n HTTP Request node calls OpenClaw's hooks API
-POST http://openclaw-railway-template.railway.internal:8080/hooks/agent
+POST http://OpenClaw.railway.internal:8080/hooks/agent
 Authorization: Bearer <OPENCLAW_HOOKS_TOKEN>
 Content-Type: application/json
 
@@ -178,13 +176,13 @@ Content-Type: application/json
 **OpenClaw triggering n8n** (AI kicks off a workflow):
 ```bash
 # OpenClaw cron or tool calls n8n's webhook trigger
-POST http://Primary.railway.internal:5678/webhook/my-workflow
+POST http://n8n-Primary.railway.internal:5678/webhook/my-workflow
 Content-Type: application/json
 
 {"data": "process this"}
 ```
 
-Both services must share the same `OPENCLAW_HOOKS_TOKEN` for authentication. See [Step 4: Wire Up n8n Webhooks](#4-wire-up-n8n-webhooks) for the full setup.
+No manual setup required — the template handles all secret sharing and internal URL wiring.
 
 ## Infrastructure Routing
 
@@ -467,7 +465,7 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 ├── scripts/
 │   └── update-openclaw.sh      # Hot-update script: clone/build OpenClaw to /data without Docker rebuild
 ├── start.sh                    # Entrypoint: Tailscale → GitHub creds → hot update → OTel → server
-├── railway.toml                # Railway deployment config (healthcheck, restart policy)
+├── railway.toml                # Railway config for OpenClaw service only (the multi-service template is dashboard-defined)
 ├── package.json                # Node.js dependencies (Express, OTel, PostHog, Langfuse)
 ├── .env.example                # Template for all environment variables
 ├── .gitignore

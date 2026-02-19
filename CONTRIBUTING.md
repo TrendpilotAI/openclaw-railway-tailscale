@@ -34,17 +34,19 @@ cp .env.example .env
 
 Only `SETUP_PASSWORD` is required for local development. The server gracefully degrades without optional services (Tailscale, Modal, Composio, Langfuse, PostHog).
 
-### n8n Webhook Wiring (Railway Deployment)
+### n8n Webhook Wiring
 
-When deploying to Railway, OpenClaw and n8n need a shared secret and internal URLs to communicate:
+When deploying via the multi-service Railway template, all cross-service variables are auto-wired via [reference variables](https://docs.railway.com/variables#reference-variables). No manual setup is needed.
+
+For **manual deployments** (not using the template), OpenClaw and n8n need a shared secret and internal URLs:
 
 1. Generate a shared secret: `openssl rand -hex 32`
 2. On the **OpenClaw** service, set:
-   - `N8N_WEBHOOK_URL=http://Primary.railway.internal:5678`
+   - `N8N_WEBHOOK_URL=http://n8n-Primary.railway.internal:5678`
    - `OPENCLAW_HOOKS_TOKEN=<the generated secret>`
 3. On the **n8n (Primary)** service, set:
    - `OPENCLAW_HOOKS_TOKEN=<same secret>`
-   - `DB_POSTGRESDB_HOST=postgres.railway.internal` (not `HOSE` — a common typo)
+   - `DB_POSTGRESDB_HOST=Postgres.railway.internal` (not `HOSE` — a common typo)
    - `DB_POSTGRESDB_USER=postgres`
    - `DB_POSTGRESDB_DATABASE=railway`
    - `DB_POSTGRESDB_PORT=5432`
@@ -186,6 +188,75 @@ The update script accepts `--stable` (latest `v*` release tag), `--beta` (latest
 
 **Key invariant**: The original `/openclaw` directory in the Docker image is never modified. It always serves as a fallback.
 
+## Multi-Service Template Architecture
+
+The Railway template deploys 7 services. The template is defined **in the Railway dashboard** (not in config files). The `railway.toml` in this repo only configures the OpenClaw service's build and deploy settings.
+
+### How It Works
+
+1. The template is created via Railway's dashboard using "Generate from existing project"
+2. Each service has its own Docker image or GitHub repo source
+3. Services are wired together using [reference variables](https://docs.railway.com/variables#reference-variables) (`${{ServiceName.VAR}}`)
+4. Secrets are auto-generated using `${{secret(32, "hex")}}` syntax
+
+### Dependency Graph
+
+```
+OpenClaw ←(optional webhook)→ n8n Primary
+                                   ↓ (required)
+                              Postgres ← Redis
+                                   ↑
+n8n Worker ───────────────────────┘
+
+Postiz → Postgres, Redis (standalone — no OpenClaw dependency)
+Temporal → Postgres (standalone — no OpenClaw dependency)
+```
+
+### Reference Variable Wiring
+
+These are the cross-service references configured in the Railway dashboard template:
+
+| Consumer | Variable | Value (Reference Expression) |
+|---|---|---|
+| OpenClaw | `OPENCLAW_HOOKS_TOKEN` | `${{secret(32, "hex")}}` |
+| OpenClaw | `N8N_WEBHOOK_URL` | `http://${{n8n Primary.RAILWAY_PRIVATE_DOMAIN}}:5678` |
+| n8n Primary | `DB_POSTGRESDB_HOST` | `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |
+| n8n Primary | `DB_POSTGRESDB_PASSWORD` | `${{Postgres.PGPASSWORD}}` |
+| n8n Primary | `DB_POSTGRESDB_DATABASE` | `${{Postgres.POSTGRES_DB}}` |
+| n8n Primary | `DB_POSTGRESDB_USER` | `${{Postgres.POSTGRES_USER}}` |
+| n8n Primary | `QUEUE_BULL_REDIS_HOST` | `${{Redis.RAILWAY_PRIVATE_DOMAIN}}` |
+| n8n Primary | `QUEUE_BULL_REDIS_PASSWORD` | `${{Redis.REDIS_PASSWORD}}` |
+| n8n Primary | `N8N_ENCRYPTION_KEY` | `${{secret(32)}}` |
+| n8n Primary | `OPENCLAW_HOOKS_TOKEN` | `${{OpenClaw.OPENCLAW_HOOKS_TOKEN}}` |
+| n8n Worker | `N8N_ENCRYPTION_KEY` | `${{n8n Primary.N8N_ENCRYPTION_KEY}}` |
+| n8n Worker | `DB_POSTGRESDB_HOST` | `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |
+| n8n Worker | `QUEUE_BULL_REDIS_HOST` | `${{Redis.RAILWAY_PRIVATE_DOMAIN}}` |
+| Postiz | `DATABASE_URL` | `postgresql://${{Postgres.POSTGRES_USER}}:${{Postgres.PGPASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}` |
+| Postiz | `REDIS_URL` | `redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379` |
+| Temporal | `POSTGRES_SEEDS` | `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |
+| Temporal | `POSTGRES_PWD` | `${{Postgres.PGPASSWORD}}` |
+
+### Updating the Template
+
+To modify the template (add/remove services, change variables):
+
+1. Go to the Railway dashboard > **Settings > Templates**
+2. Edit the template for "OpenClaw AI + n8n + Tailscale"
+3. Add or modify services and their variables
+4. Service names in `${{ServiceName.VAR}}` must exactly match — do not rename services after wiring
+
+### Service Images
+
+| Service | Docker Image |
+|---|---|
+| OpenClaw | Built from `Dockerfile` in this repo |
+| n8n Primary | `n8nio/n8n:latest` |
+| n8n Worker | `n8nio/n8n:latest` |
+| Postgres | `ghcr.io/railwayapp-templates/postgres-ssl:17` |
+| Redis | `redis:8.2.1` |
+| Postiz | `ghcr.io/gitroomhq/postiz-app:latest` |
+| Temporal | `temporalio/auto-setup:latest` |
+
 ## Adding Features
 
 ### Adding a New Health Check
@@ -215,7 +286,7 @@ Add the install command to the appropriate `RUN` layer in `Dockerfile`. Group wi
 
 ```dockerfile
 # In the tools installation RUN block
-RUN npm install -g @steipete/bird @composio/rube-mcp your-new-tool \
+RUN npm install -g npm@11 @composio/rube-mcp your-new-tool \
   && ...
 ```
 
