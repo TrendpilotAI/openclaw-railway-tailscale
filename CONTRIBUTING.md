@@ -34,6 +34,24 @@ cp .env.example .env
 
 Only `SETUP_PASSWORD` is required for local development. The server gracefully degrades without optional services (Tailscale, Modal, Composio, Langfuse, PostHog).
 
+### n8n Webhook Wiring (Railway Deployment)
+
+When deploying to Railway, OpenClaw and n8n need a shared secret and internal URLs to communicate:
+
+1. Generate a shared secret: `openssl rand -hex 32`
+2. On the **OpenClaw** service, set:
+   - `N8N_WEBHOOK_URL=http://Primary.railway.internal:5678`
+   - `OPENCLAW_HOOKS_TOKEN=<the generated secret>`
+3. On the **n8n (Primary)** service, set:
+   - `OPENCLAW_HOOKS_TOKEN=<same secret>`
+   - `DB_POSTGRESDB_HOST=postgres.railway.internal` (not `HOSE` — a common typo)
+   - `DB_POSTGRESDB_USER=postgres`
+   - `DB_POSTGRESDB_DATABASE=railway`
+   - `DB_POSTGRESDB_PORT=5432`
+   - `DB_TYPE=postgresdb`
+
+n8n auto-creates all database tables (`execution_entity`, `workflow_entity`, etc.) on first successful PostgreSQL connection. If you see "relation does not exist" errors, check the database variables and redeploy n8n.
+
 ### Running the Docker Build
 
 ```bash

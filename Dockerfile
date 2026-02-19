@@ -36,7 +36,7 @@ ENV NODE_ENV=production
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl build-essential gcc g++ make procps file git \
-    python3 pkg-config sudo iptables iproute2 dnsutils \
+    python3 python3-pip pkg-config sudo iptables iproute2 dnsutils \
   && curl -fsSL https://tailscale.com/install.sh | sh \
   && rm -rf /var/lib/apt/lists/*
 

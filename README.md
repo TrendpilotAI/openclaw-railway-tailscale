@@ -77,7 +77,39 @@ Once deployed, open your Railway service URL and navigate to `/setup`. Enter the
 
 The wizard runs `openclaw onboard` non-interactively, applies cost-optimized defaults, copies 30+ skills to your workspace, and starts the gateway.
 
-### 4. Connect from Your Local Machine
+### 4. Wire Up n8n Webhooks
+
+OpenClaw and n8n communicate over Railway's private network. Generate a shared secret and set the internal URLs on both services:
+
+```bash
+# Generate a shared secret
+openssl rand -hex 32
+```
+
+**On the OpenClaw service** (Railway Variables tab):
+
+| Variable | Value |
+|---|---|
+| `N8N_WEBHOOK_URL` | `http://Primary.railway.internal:5678` |
+| `OPENCLAW_HOOKS_TOKEN` | *(paste the generated secret)* |
+
+**On the n8n (Primary) service** (Railway Variables tab):
+
+| Variable | Value |
+|---|---|
+| `OPENCLAW_HOOKS_TOKEN` | *(same secret as above)* |
+| `DB_TYPE` | `postgresdb` |
+| `DB_POSTGRESDB_HOST` | `postgres.railway.internal` |
+| `DB_POSTGRESDB_PORT` | `5432` |
+| `DB_POSTGRESDB_DATABASE` | `railway` |
+| `DB_POSTGRESDB_USER` | `postgres` |
+| `DB_POSTGRESDB_PASSWORD` | *(from your Railway PostgreSQL service)* |
+| `WEBHOOK_URL` | `https://<your-n8n-domain>.up.railway.app` |
+| `N8N_EDITOR_BASE_URL` | `https://<your-n8n-domain>.up.railway.app` |
+
+Redeploy n8n after setting these variables. On first successful connection, n8n auto-creates all required database tables.
+
+### 5. Connect from Your Local Machine
 
 With Tailscale installed on your Mac/PC, the Railway instance appears on your tailnet:
 
@@ -152,7 +184,7 @@ Content-Type: application/json
 {"data": "process this"}
 ```
 
-Set `OPENCLAW_HOOKS_TOKEN` on the OpenClaw service to enable webhook auth.
+Both services must share the same `OPENCLAW_HOOKS_TOKEN` for authentication. See [Step 4: Wire Up n8n Webhooks](#4-wire-up-n8n-webhooks) for the full setup.
 
 ## Infrastructure Routing
 
@@ -375,6 +407,20 @@ Your config and workspace always persist on the `/data` volume. The original Ope
 2. Check the Debug console at `/setup` and run `openclaw doctor`
 3. Verify your API key is valid
 4. Check Railway deployment logs
+
+### n8n "relation does not exist" errors
+
+If you see `relation "public.execution_entity" does not exist` or similar errors in n8n logs, the database tables were never created. Common causes:
+
+1. **`DB_POSTGRESDB_HOST` is misspelled** — double-check the variable name (not `HOSE`)
+2. **`DB_POSTGRESDB_USER` is missing** — set it to `postgres` (Railway's default)
+3. **n8n started before PostgreSQL was ready** — redeploy the n8n service
+
+After fixing, redeploy n8n. It runs migrations automatically on startup.
+
+### Gateway token missing (Control UI)
+
+If the browser shows `unauthorized: gateway token missing`, you need to paste the gateway token into the Control UI settings. Find it at `/setup` on the Railway public URL (`https://<your-service>.up.railway.app/setup`).
 
 ### Tailscale not connecting
 
