@@ -2,7 +2,7 @@
 
 Deploy [OpenClaw](https://github.com/openclaw/openclaw) and [n8n](https://n8n.io) to Railway with secure Tailscale mesh networking, built-in observability, and 4-platform compute routing. One click to deploy, zero SSH required.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.app/template/TEMPLATE_ID?referralCode=YOUR_CODE)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/cDVYRI)
 
 ## What This Deploys
 
@@ -112,6 +112,37 @@ After deploying, you can delete any companion services you don't need from the R
 
 ## Architecture
 
+### Request Flow
+
+```
+Internet → Railway :8080 → Express (server.js)
+                              │
+                    ┌─────────┴─────────┐
+                    │                   │
+              /setup/* routes      All other routes
+              (setup wizard)       (proxy to gateway)
+                    │                   │
+                    ▼                   ▼
+               Setup UI           Gateway :18789
+              (browser)          (OpenClaw core)
+                                       │
+                              ┌────────┼────────┐
+                              │        │        │
+                            LLM     Skills    n8n
+                           (API)   (tools)  (webhooks)
+```
+
+**How it works:**
+- Express listens on port 8080 (Railway's public domain)
+- `/setup/*` routes serve the setup wizard UI and API (protected by `SETUP_PASSWORD`)
+- `/healthz` and `/setup/healthz` are unauthenticated health checks for Railway probes
+- All other routes are proxied via `http-proxy` to the OpenClaw gateway on `127.0.0.1:18789`
+- The gateway is a child process spawned by Express after setup completes
+- The gateway only binds to loopback — it is never directly exposed to the internet
+- If the gateway is not running, Express returns a 503 with troubleshooting hints
+
+### Network Architecture
+
 ```
                               Railway Private Network
   ┌───────────────────────────────────────────────────────────────────────┐
@@ -183,6 +214,52 @@ Content-Type: application/json
 ```
 
 No manual setup required — the template handles all secret sharing and internal URL wiring.
+
+### Manual n8n Webhook Wiring (Non-Template Deployments)
+
+If you deployed manually (not using the one-click template), you need to wire OpenClaw and n8n together yourself:
+
+**1. Generate a shared secret:**
+```bash
+openssl rand -hex 32
+# Example output: a1b2c3d4e5f6...
+```
+
+**2. Set variables on the OpenClaw service:**
+
+| Variable | Value |
+|---|---|
+| `N8N_WEBHOOK_URL` | `http://n8n-Primary.railway.internal:5678` |
+| `OPENCLAW_HOOKS_TOKEN` | `<paste the secret from step 1>` |
+
+**3. Set variables on the n8n Primary service:**
+
+| Variable | Value |
+|---|---|
+| `OPENCLAW_HOOKS_TOKEN` | `<same secret as step 1>` |
+| `DB_TYPE` | `postgresdb` |
+| `DB_POSTGRESDB_HOST` | `Postgres.railway.internal` |
+| `DB_POSTGRESDB_PORT` | `5432` |
+| `DB_POSTGRESDB_USER` | `postgres` |
+| `DB_POSTGRESDB_DATABASE` | `railway` |
+| `DB_POSTGRESDB_PASSWORD` | `<from Postgres service variables>` |
+
+> **Note:** n8n auto-creates all database tables on first successful connection. If you see "relation does not exist" errors, check the database variables and redeploy n8n.
+
+**4. Redeploy both services** (n8n first, then OpenClaw).
+
+**5. Test connectivity:**
+```bash
+# From n8n → OpenClaw (use n8n HTTP Request node):
+POST http://openclaw-railway-template.railway.internal:8080/hooks/agent
+Authorization: Bearer <OPENCLAW_HOOKS_TOKEN>
+Content-Type: application/json
+{"message": "test"}
+# Should return 200
+
+# Verify OpenClaw → n8n URL resolves:
+# Check OpenClaw logs for: [hooks] n8n webhook URL configured
+```
 
 ## Infrastructure Routing
 
@@ -400,10 +477,26 @@ Your config and workspace always persist on the `/data` volume. The original Ope
 
 ### Gateway not starting
 
-1. Visit `/setup/api/debug` for diagnostics
-2. Check the Debug console at `/setup` and run `openclaw doctor`
-3. Verify your API key is valid
-4. Check Railway deployment logs
+**Symptoms:** `[proxy] Error: connect ECONNREFUSED 127.0.0.1:18789`, `[wrapper] gateway failed to start at boot`, or setup wizard loads but all proxied requests fail.
+
+**Common causes:**
+
+| Issue | Symptoms | Fix |
+|---|---|---|
+| Missing API key | `[gateway] No model providers configured` | Set `ANTHROPIC_API_KEY` or another LLM key in Railway Variables |
+| Invalid AWS credentials | `[bedrock-discovery] Failed to list models: SyntaxError` | Verify `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` |
+| Gateway timeout | `Gateway did not become ready in time` | Increase `healthcheckTimeout` in `railway.toml` (default: 300s) |
+| Insufficient memory | Gateway crashes silently | Upgrade to 2GB+ RAM in Railway plan. Check Metrics tab. |
+| Corrupted state | Gateway crashes on startup loop | Delete `/data/.openclaw` and redeploy (workspace re-initializes) |
+| Port conflict | `EADDRINUSE :18789` | Another process using the port — restart the service |
+
+**Debug steps:**
+
+1. Visit `/setup/api/debug` for full diagnostics (versions, paths, gateway state)
+2. Open the Debug console at `/setup` and run `openclaw doctor`
+3. Check Railway deployment logs for `[wrapper]` or `[gateway]` errors
+4. Verify your API key is valid and has credits
+5. Check memory usage in Railway Metrics — if consistently >90%, upgrade plan
 
 ### n8n "relation does not exist" errors
 
@@ -439,12 +532,67 @@ This usually means the gateway hasn't started yet. The Express wrapper returns a
 2. Click "Refresh pending devices" to see requests
 3. Approve the device ID for your chat
 
+### n8n can't connect to OpenClaw
+
+**Symptoms:** n8n HTTP Request node returns 502/503, or `[proxy] Error: connect ECONNREFUSED` in OpenClaw logs.
+
+1. Verify `N8N_WEBHOOK_URL` is set on OpenClaw (should be `http://Primary.railway.internal:5678`)
+2. Verify `OPENCLAW_HOOKS_TOKEN` matches on both OpenClaw and n8n Primary
+3. Confirm the OpenClaw gateway is running (check `/setup` status page)
+4. Test internal connectivity: `curl -H "Authorization: Bearer <token>" http://openclaw-railway-template.railway.internal:8080/healthz`
+
 ### No traces appearing in Langfuse
 
 1. Verify both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set
 2. Check Railway logs for `[otel] Langfuse span processor enabled`
 3. If you see `[otel] No trace backends configured`, the keys are missing or empty
 4. Verify `LANGFUSE_BASEURL` if using a self-hosted Langfuse instance
+
+## Deployment Checklist
+
+Use this checklist when deploying for the first time or troubleshooting a broken deployment.
+
+### Pre-Deployment
+
+- [ ] Railway account created at [railway.app](https://railway.app)
+- [ ] Tailscale account created at [tailscale.com](https://tailscale.com)
+- [ ] Tailscale auth key generated (Reusable + Ephemeral recommended)
+- [ ] At least one LLM API key ready (Anthropic, OpenAI, etc.)
+
+### Deployment
+
+- [ ] Clicked "Deploy on Railway" or deployed from GitHub fork
+- [ ] Volume mounted at `/data` (persists config and workspace)
+- [ ] `SETUP_PASSWORD` set in Railway Variables
+- [ ] `TAILSCALE_AUTHKEY` set in Railway Variables
+- [ ] `ANTHROPIC_API_KEY` or another LLM key set (can also enter during setup wizard)
+- [ ] Build completed successfully (~5-10 min, OpenClaw compiles from source)
+- [ ] All deployed services show "Online" in Railway dashboard
+
+### Post-Deployment
+
+- [ ] Opened Railway service URL → `/setup`
+- [ ] Entered `SETUP_PASSWORD` and completed the setup wizard
+- [ ] Gateway started (logs show `[wrapper] listening on :8080`)
+- [ ] No `[proxy] Error: connect ECONNREFUSED` errors in logs
+- [ ] Tested a simple request in the OpenClaw UI
+
+### If Using Companion Services (n8n, Postiz, etc.)
+
+- [ ] n8n Primary shows "Online" and logs show successful database migration
+- [ ] Postgres is healthy (n8n auto-creates tables on first connection)
+- [ ] Redis is healthy (required for n8n queue mode)
+- [ ] `OPENCLAW_HOOKS_TOKEN` matches on both OpenClaw and n8n Primary
+- [ ] `N8N_WEBHOOK_URL` resolves correctly (check OpenClaw logs)
+- [ ] Tested n8n → OpenClaw webhook (HTTP Request node to `/hooks/agent`)
+
+### Monitoring
+
+- [ ] Railway Metrics tab shows healthy CPU/Memory usage
+- [ ] `/setup/healthz` returns 200 OK
+- [ ] `/healthz` returns detailed health status
+- [ ] PostHog analytics configured (optional — set `POSTHOG_API_KEY`)
+- [ ] Langfuse tracing configured (optional — set `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`)
 
 ## Security
 

@@ -96,11 +96,25 @@ Internet → Railway :8080 → Express (server.js)
                     │                   │
               /setup/* routes      All other routes
               (setup wizard)       (proxy to gateway)
-                                        │
-                                        ▼
-                                  Gateway :18789
-                                  (OpenClaw core)
+                    │                   │
+                    ▼                   ▼
+               Setup UI           Gateway :18789
+              (browser)          (OpenClaw core)
+                                       │
+                              ┌────────┼────────┐
+                              │        │        │
+                            LLM     Skills    n8n
+                           (API)   (tools)  (webhooks)
 ```
+
+**Key details:**
+- Express listens on `:8080` (Railway's public port)
+- `/setup/*` routes serve the setup wizard UI and API, protected by `SETUP_PASSWORD` via HTTP Basic auth
+- `/healthz` and `/setup/healthz` are unauthenticated for Railway health probes
+- All other routes are proxied via `http-proxy` to `127.0.0.1:18789` (the OpenClaw gateway)
+- The gateway is a child process spawned after setup completes — it only binds to loopback
+- If the gateway is not running, Express returns a 503 with troubleshooting hints
+- The gateway communicates with LLM APIs, executes skills/tools, and triggers n8n webhooks
 
 ### Key Source Files
 
@@ -256,6 +270,70 @@ To modify the template (add/remove services, change variables):
 | Redis | `redis:8.2.1` |
 | Postiz | `ghcr.io/gitroomhq/postiz-app:latest` |
 | Temporal | `temporalio/auto-setup:latest` |
+
+## Troubleshooting Development Issues
+
+### Gateway Won't Start Locally
+
+If `pnpm dev` starts Express but the gateway doesn't connect:
+
+1. **Check OpenClaw is available:** The gateway binary must exist at the path specified by `OPENCLAW_ENTRY` (or the default `/openclaw/dist/entry.js` in Docker)
+2. **Verify environment variables:** `.env` must have at least `SETUP_PASSWORD` and an LLM API key
+3. **Check port 18789 is free:** `lsof -i :18789` — kill any existing process
+4. **Run with debug logging:** `DEBUG=* pnpm dev`
+
+### n8n Database Errors
+
+If n8n shows "relation does not exist" errors:
+
+1. Verify Postgres is running and accessible
+2. Check `DB_POSTGRESDB_*` variables match your Postgres service
+3. Redeploy n8n — it runs migrations automatically on startup
+4. If tables are corrupted, drop and let n8n recreate: `psql -h localhost -U postgres -d railway -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"`
+
+### Tailscale Auth Key Expired
+
+1. Generate a new key at [Tailscale Admin > Keys](https://login.tailscale.com/admin/settings/keys)
+2. Enable **Reusable** and **Ephemeral**
+3. Update `TAILSCALE_AUTHKEY` in `.env` (local) or Railway Variables (production)
+4. Restart the server
+
+## Deployment Checklist
+
+### Before Deploying
+
+- [ ] All tests pass: `pnpm test`
+- [ ] No lint errors: `pnpm lint`
+- [ ] Docker builds locally: `docker build -t openclaw-railway .`
+- [ ] Commit message follows [Conventional Commits](https://www.conventionalcommits.org/)
+
+### Deployment Configuration
+
+- [ ] Volume mounted at `/data` (persistent state)
+- [ ] `SETUP_PASSWORD` set (required)
+- [ ] `TAILSCALE_AUTHKEY` set (required)
+- [ ] LLM API key set (`ANTHROPIC_API_KEY` or equivalent)
+- [ ] `healthcheckPath=/setup/healthz` configured in `railway.toml`
+- [ ] `healthcheckTimeout=300` (or higher for slow first boots)
+
+### Post-Deployment Verification
+
+- [ ] Service shows "Online" in Railway dashboard
+- [ ] Logs show `[wrapper] listening on :8080`
+- [ ] No `[proxy] Error: connect ECONNREFUSED` errors
+- [ ] `/setup/healthz` returns 200 OK
+- [ ] Setup wizard loads at `/setup`
+- [ ] Gateway starts after completing setup
+
+### If Deploying with n8n
+
+- [ ] n8n Primary deployed and shows "Online"
+- [ ] Postgres and Redis deployed and healthy
+- [ ] `N8N_WEBHOOK_URL` set on OpenClaw service
+- [ ] `OPENCLAW_HOOKS_TOKEN` matches on both OpenClaw and n8n Primary
+- [ ] n8n database variables set correctly (`DB_POSTGRESDB_*`)
+- [ ] Both services redeployed after variable changes
+- [ ] Tested webhook connectivity (n8n HTTP Request → OpenClaw `/hooks/agent`)
 
 ## Adding Features
 
