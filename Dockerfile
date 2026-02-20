@@ -13,7 +13,7 @@ RUN corepack enable
 
 WORKDIR /openclaw
 
-ARG OPENCLAW_GIT_REF=main
+ARG OPENCLAW_GIT_REF=v2026.2.19
 RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git .
 
 RUN set -eux; \
@@ -71,8 +71,8 @@ RUN npm install -g npm@11 @composio/rube-mcp \
 # Clone /last30days research skill
 RUN git clone --depth 1 https://github.com/mvanhorn/last30days-skill.git /root/.claude/skills/last30days
 
-# Force fresh build — v2026.02.18
-RUN echo "build-v2"
+# Force fresh build — v2026.02.19
+RUN echo "build-v3"
 COPY src ./src
 COPY workspace ./workspace
 COPY scripts ./scripts

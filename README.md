@@ -446,7 +446,7 @@ There are three ways to update OpenClaw, from heaviest to lightest:
 
 Redeploy from Railway to pull the latest OpenClaw `main` branch. Pin a specific version with the build arg:
 ```
-OPENCLAW_GIT_REF=v2026.2.12
+OPENCLAW_GIT_REF=v2026.2.19
 ```
 
 **2. Boot-time update** (no rebuild, updates on container start)

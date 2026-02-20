@@ -4,6 +4,14 @@ All notable changes to this project are documented here. This project follows [C
 
 ## [Unreleased]
 
+### Changed
+- Pinned OpenClaw to v2026.2.19 (was `main`). Notable upstream changes:
+  - **Breaking:** Gateway auth defaults to token mode with auto-generation (set `gateway.auth.mode: "none"` for open loopback)
+  - Apple Watch companion MVP (inbox UI, notification relay, command surfaces)
+  - APNs push registration and iOS node wake before invocation
+  - New device management CLI commands (`device.pair.remove`, `openclaw devices remove`)
+  - Security hardening: path traversal prevention, SSRF protections for IPv6, prototype pollution blocking, command injection prevention
+
 ### Added
 - Request flow diagrams in README and CONTRIBUTING explaining Express → Gateway proxy architecture
 - Expanded troubleshooting section with gateway failure diagnostic table, debug steps, and n8n connectivity fixes
