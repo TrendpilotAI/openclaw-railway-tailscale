@@ -165,6 +165,32 @@ function isConfigured() {
   }
 }
 
+/**
+ * Remove config keys that are managed exclusively via CLI args to avoid
+ * schema-validation errors when OpenClaw upgrades change the config schema.
+ * The wrapper already passes --bind and --port as CLI args to `gateway run`,
+ * so persisted values in the config file are redundant and can break startup.
+ */
+function cleanupStaleConfigKeys() {
+  try {
+    const p = configPath();
+    if (!fs.existsSync(p)) return;
+    const raw = fs.readFileSync(p, "utf8");
+    const cfg = JSON.parse(raw);
+    let changed = false;
+    if (cfg.gateway?.bind !== undefined) {
+      delete cfg.gateway.bind;
+      changed = true;
+    }
+    if (changed) {
+      fs.writeFileSync(p, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+      console.log("[wrapper] cleaned stale gateway.bind from config (managed via CLI args)");
+    }
+  } catch (err) {
+    console.warn(`[wrapper] config cleanup failed (non-fatal): ${String(err)}`);
+  }
+}
+
 let gatewayProc = null;
 let gatewayStarting = null;
 
@@ -724,8 +750,11 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.mode", "token"]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+    // NOTE: Do NOT persist gateway.bind or gateway.port to the config file — they are
+    // managed exclusively via CLI args in startGateway(). Persisting them can cause
+    // schema-validation errors when OpenClaw upgrades change the config schema.
+    // await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
+    // await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
     // Copy default workspace files (AGENTS.md, skills/) if not already present.
     const defaultWorkspaceDir = path.join(process.cwd(), "workspace");
@@ -1408,6 +1437,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   // Auto-start the gateway if already configured so polling channels (Telegram/Discord/etc.)
   // work even if nobody visits the web UI.
   if (isConfigured()) {
+    cleanupStaleConfigKeys();
     console.log("[wrapper] config detected; starting gateway...");
     try {
       await ensureGatewayRunning();
