@@ -307,14 +307,19 @@ async function ensureGatewayRunning() {
       try {
         lastGatewayError = null;
         await startGateway();
-        const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+        const ready = await waitForGatewayReady({ timeoutMs: 60_000 });
         if (!ready) {
-          throw new Error("Gateway did not become ready in time");
+          // The process may still be alive and initializing — don't throw if
+          // the child process is still running. Railway cold-starts can be slow.
+          if (gatewayProc) {
+            console.warn("[wrapper] readiness check timed out but gateway process is alive; continuing");
+          } else {
+            throw new Error("Gateway did not become ready in time");
+          }
         }
       } catch (err) {
         const msg = `[gateway] start failure: ${String(err)}`;
         lastGatewayError = msg;
-        // Collect extra diagnostics to help users file issues.
         await runDoctorBestEffort();
         throw err;
       }
