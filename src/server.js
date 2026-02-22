@@ -1,6 +1,7 @@
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -204,26 +205,23 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function checkPort(host, port, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    sock.setTimeout(timeoutMs);
+    sock.once("connect", () => { sock.destroy(); resolve(true); });
+    sock.once("timeout", () => { sock.destroy(); resolve(false); });
+    sock.once("error", () => { sock.destroy(); resolve(false); });
+    sock.connect(port, host);
+  });
+}
+
 async function waitForGatewayReady(opts = {}) {
-  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    try {
-      // Try the default Control UI base path, then fall back to legacy or root.
-      const paths = ["/openclaw", "/clawdbot", "/"]; 
-      for (const p of paths) {
-        try {
-          const res = await fetch(`${GATEWAY_TARGET}${p}`, { method: "GET" });
-          // Any HTTP response means the port is open.
-          if (res) return true;
-        } catch {
-          // try next
-        }
-      }
-    } catch {
-      // not ready
-    }
-    await sleep(250);
+    if (await checkPort(INTERNAL_GATEWAY_HOST, INTERNAL_GATEWAY_PORT)) return true;
+    await sleep(500);
   }
   return false;
 }
@@ -269,6 +267,20 @@ async function startGateway() {
     console.error(msg);
     lastGatewayExit = { code, signal, at: new Date().toISOString() };
     gatewayProc = null;
+
+    // Auto-restart the gateway after unexpected exits (not SIGTERM from wrapper).
+    if (signal !== "SIGTERM" && isConfigured()) {
+      const delay = 5000;
+      console.log(`[wrapper] gateway crashed; auto-restarting in ${delay / 1000}s...`);
+      setTimeout(() => {
+        if (!gatewayProc && isConfigured()) {
+          cleanupStaleConfigKeys();
+          ensureGatewayRunning()
+            .then(() => console.log("[wrapper] gateway auto-restarted"))
+            .catch((err) => console.error(`[wrapper] gateway auto-restart failed: ${String(err)}`));
+        }
+      }, delay);
+    }
   });
 }
 
@@ -1443,6 +1455,30 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       await ensureGatewayRunning();
       console.log("[wrapper] gateway ready");
       trackEvent("gateway_started");
+
+      // Auto-approve any pending device pairing requests so the wrapper proxy
+      // and remote clients can connect without manual intervention.
+      try {
+        const devList = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list", "--json"]));
+        if (devList.code === 0 && devList.output.trim()) {
+          try {
+            const devices = JSON.parse(devList.output);
+            const pending = (Array.isArray(devices) ? devices : devices?.devices || [])
+              .filter((d) => d.status === "pending" || d.state === "pending");
+            for (const d of pending) {
+              const id = d.requestId || d.id;
+              if (id) {
+                const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", id]));
+                console.log(`[wrapper] auto-approved device ${id} (exit=${r.code})`);
+              }
+            }
+          } catch {
+            // JSON parse failed — devices list may not support --json, ignore
+          }
+        }
+      } catch {
+        // best effort
+      }
     } catch (err) {
       console.error(`[wrapper] gateway failed to start at boot: ${String(err)}`);
     }
