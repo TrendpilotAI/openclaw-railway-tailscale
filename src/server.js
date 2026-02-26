@@ -100,8 +100,13 @@ const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
 const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 
 // Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
-const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
-const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+// Read at call time (not module load) so hot updates via `openclaw.update` take effect immediately.
+function getOpenClawEntry() {
+  return process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
+}
+function getOpenClawNode() {
+  return process.env.OPENCLAW_NODE?.trim() || "node";
+}
 
 // PostHog product analytics (guarded — no crash if key not set).
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY?.trim();
@@ -130,7 +135,7 @@ function trackEvent(event, properties = {}) {
 }
 
 function clawArgs(args) {
-  return [OPENCLAW_ENTRY, ...args];
+  return [getOpenClawEntry(), ...args];
 }
 
 function resolveConfigCandidates() {
@@ -177,12 +182,79 @@ function isConfigured() {
 }
 
 /**
- * Remove config keys that are managed exclusively via CLI args to avoid
- * schema-validation errors when OpenClaw upgrades change the config schema.
- * The wrapper already passes --bind and --port as CLI args to `gateway run`,
- * so persisted values in the config file are redundant and can break startup.
+ * Write a file atomically (write to temp, then rename) to prevent corruption
+ * from mid-write crashes or signals.
  */
-function cleanupStaleConfigKeys() {
+function atomicWriteFile(filePath, content) {
+  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, content, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * Create a timestamped backup of the config file (if it exists and is valid JSON).
+ * Keeps the last 5 auto-backups, pruning older ones.
+ */
+function backupConfigIfExists() {
+  try {
+    const p = configPath();
+    if (!fs.existsSync(p)) return;
+    const raw = fs.readFileSync(p, "utf8").trim();
+    if (!raw) return;
+    try { JSON.parse(raw); } catch { return; } // only backup valid JSON
+
+    const backupPath = `${p}.auto-bak-${Date.now()}`;
+    fs.copyFileSync(p, backupPath);
+
+    const dir = path.dirname(p);
+    const base = path.basename(p);
+    const backups = fs.readdirSync(dir)
+      .filter((f) => f.startsWith(`${base}.auto-bak-`))
+      .sort()
+      .reverse();
+    for (const old of backups.slice(5)) {
+      try { fs.unlinkSync(path.join(dir, old)); } catch {}
+    }
+  } catch (err) {
+    console.warn(`[wrapper] config backup failed: ${String(err)}`);
+  }
+}
+
+/**
+ * Attempt to recover config from the most recent valid backup.
+ * Searches both auto-backups and manual backups.
+ */
+function recoverFromBackup() {
+  try {
+    const p = configPath();
+    const dir = path.dirname(p);
+    const base = path.basename(p);
+    const backups = fs.readdirSync(dir)
+      .filter((f) => f.startsWith(`${base}.auto-bak-`) || f.startsWith(`${base}.bak-`))
+      .sort()
+      .reverse();
+
+    for (const backup of backups) {
+      try {
+        const raw = fs.readFileSync(path.join(dir, backup), "utf8");
+        JSON.parse(raw); // validate
+        fs.copyFileSync(path.join(dir, backup), p);
+        console.log(`[wrapper] recovered config from backup: ${backup}`);
+        return true;
+      } catch { continue; }
+    }
+  } catch {}
+  console.error("[wrapper] no valid backup found for recovery");
+  return false;
+}
+
+/**
+ * Clean config before gateway start:
+ * 1. Handle empty/corrupt config files
+ * 2. Remove gateway.bind (managed via CLI args)
+ * 3. Run `openclaw doctor --fix` to strip any unrecognized schema keys
+ */
+async function cleanupStaleConfigKeys() {
   try {
     const p = configPath();
     if (!fs.existsSync(p)) return;
@@ -200,14 +272,26 @@ function cleanupStaleConfigKeys() {
       fs.unlinkSync(p);
       return;
     }
+
+    // Remove keys managed via CLI args (these break across version upgrades)
     let changed = false;
     if (cfg.gateway?.bind !== undefined) {
       delete cfg.gateway.bind;
       changed = true;
     }
     if (changed) {
-      fs.writeFileSync(p, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+      atomicWriteFile(p, JSON.stringify(cfg, null, 2));
       console.log("[wrapper] cleaned stale gateway.bind from config (managed via CLI args)");
+    }
+
+    // Run openclaw doctor --fix to strip any unrecognized keys from the schema.
+    // This is the primary defense against crash loops caused by config drift.
+    console.log("[wrapper] running openclaw doctor --fix to validate config...");
+    const result = await runCmd(getOpenClawNode(), clawArgs(["doctor", "--fix"]), { timeout: 30_000 });
+    if (result.code === 0) {
+      console.log("[wrapper] doctor --fix completed successfully");
+    } else {
+      console.warn(`[wrapper] doctor --fix exited ${result.code}: ${(result.output || "").slice(0, 500)}`);
     }
   } catch (err) {
     console.warn(`[wrapper] config cleanup failed (non-fatal): ${String(err)}`);
@@ -216,12 +300,39 @@ function cleanupStaleConfigKeys() {
 
 let gatewayProc = null;
 let gatewayStarting = null;
+let shuttingDown = false;
 
 // Debug breadcrumbs for common Railway failures (502 / "Application failed to respond").
 let lastGatewayError = null;
 let lastGatewayExit = null;
 let lastDoctorOutput = null;
 let lastDoctorAt = null;
+
+// Crash recovery with exponential backoff and safe mode.
+let crashCount = 0;
+let lastCrashTime = 0;
+const CRASH_RESET_WINDOW = 5 * 60 * 1000; // 5min stability resets counter
+const BASE_DELAY = 2000;
+const MAX_DELAY = 60_000;
+const MAX_CRASHES = 10;
+
+function calculateRestartDelay() {
+  const now = Date.now();
+  if (now - lastCrashTime > CRASH_RESET_WINDOW) {
+    crashCount = 0;
+  }
+  crashCount++;
+  lastCrashTime = now;
+  if (crashCount > MAX_CRASHES) return null; // safe mode
+  const delay = Math.min(BASE_DELAY * Math.pow(2, crashCount - 1), MAX_DELAY);
+  const jitter = Math.random() * 1000;
+  return Math.round(delay + jitter);
+}
+
+function resetCrashCounter() {
+  crashCount = 0;
+  lastCrashTime = 0;
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -268,7 +379,7 @@ async function startGateway() {
     OPENCLAW_GATEWAY_TOKEN,
   ];
 
-  gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
+  gatewayProc = childProcess.spawn(getOpenClawNode(), clawArgs(args), {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -287,22 +398,38 @@ async function startGateway() {
   gatewayProc.on("exit", (code, signal) => {
     const msg = `[gateway] exited code=${code} signal=${signal}`;
     console.error(msg);
-    lastGatewayExit = { code, signal, at: new Date().toISOString() };
+    lastGatewayExit = { code, signal, at: new Date().toISOString(), crashCount };
     gatewayProc = null;
 
-    // Auto-restart the gateway after unexpected exits (not SIGTERM from wrapper).
-    if (signal !== "SIGTERM" && isConfigured()) {
-      const delay = 5000;
-      console.log(`[wrapper] gateway crashed; auto-restarting in ${delay / 1000}s...`);
-      setTimeout(() => {
-        if (!gatewayProc && isConfigured()) {
-          cleanupStaleConfigKeys();
-          ensureGatewayRunning()
-            .then(() => console.log("[wrapper] gateway auto-restarted"))
-            .catch((err) => console.error(`[wrapper] gateway auto-restart failed: ${String(err)}`));
-        }
-      }, delay);
+    // Don't auto-restart on intentional shutdown or if wrapper is shutting down.
+    if (signal === "SIGTERM" || shuttingDown) return;
+    if (!isConfigured()) return;
+
+    const delay = calculateRestartDelay();
+    if (delay === null) {
+      console.error(`[wrapper] gateway has crashed ${crashCount} times -- entering safe mode`);
+      console.error("[wrapper] safe mode: gateway will NOT auto-restart. Use /setup debug console to manually restart.");
+      return;
     }
+
+    console.log(`[wrapper] gateway crashed (attempt ${crashCount}/${MAX_CRASHES}); auto-restarting in ${(delay / 1000).toFixed(1)}s...`);
+
+    // After 3+ crashes, attempt config recovery from backup before restarting
+    if (crashCount >= 3) {
+      console.warn("[wrapper] 3+ crashes, attempting config recovery from backup");
+      recoverFromBackup();
+    }
+
+    setTimeout(async () => {
+      if (gatewayProc || !isConfigured() || shuttingDown) return;
+      try {
+        await cleanupStaleConfigKeys();
+        await ensureGatewayRunning();
+        console.log("[wrapper] gateway auto-restarted");
+      } catch (err) {
+        console.error(`[wrapper] gateway auto-restart failed: ${String(err)}`);
+      }
+    }, delay);
   });
 }
 
@@ -313,7 +440,7 @@ async function runDoctorBestEffort() {
   lastDoctorAt = now;
 
   try {
-    const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+    const r = await runCmd(getOpenClawNode(), clawArgs(["doctor"]));
     const out = redactSecrets(r.output || "");
     lastDoctorOutput = out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
   } catch (err) {
@@ -328,6 +455,7 @@ async function ensureGatewayRunning() {
     gatewayStarting = (async () => {
       try {
         lastGatewayError = null;
+        backupConfigIfExists();
         await startGateway();
         const ready = await waitForGatewayReady({ timeoutMs: 60_000 });
         if (!ready) {
@@ -354,6 +482,8 @@ async function ensureGatewayRunning() {
 }
 
 async function restartGateway() {
+  // Manual restarts exit safe mode.
+  resetCrashCounter();
   if (gatewayProc) {
     try {
       gatewayProc.kill("SIGTERM");
@@ -395,8 +525,17 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
-// Minimal health endpoint for Railway.
-app.get("/setup/healthz", (_req, res) => res.json({ ok: true }));
+// Minimal health endpoint for Railway. Always returns 200 (Railway needs this to
+// consider the deploy healthy). Includes diagnostic fields for external monitoring.
+app.get("/setup/healthz", (_req, res) => res.json({
+  ok: true,
+  gateway: {
+    configured: isConfigured(),
+    running: Boolean(gatewayProc),
+    safeMode: crashCount > MAX_CRASHES,
+    crashCount,
+  },
+}));
 
 // Public health endpoint (no auth) so Railway can probe without /setup.
 // Keep this free of secrets.
@@ -603,8 +742,8 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 });
 
 app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
-  const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
-  const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+  const version = await runCmd(getOpenClawNode(), clawArgs(["--version"]));
+  const channelsHelp = await runCmd(getOpenClawNode(), clawArgs(["channels", "add", "--help"]));
 
   // We reuse OpenClaw's own auth-choice grouping logic indirectly by hardcoding the same group defs.
   // This is intentionally minimal; later we can parse the CLI help output to stay perfectly in sync.
@@ -733,15 +872,23 @@ function buildOnboardArgs(payload) {
 }
 
 function runCmd(cmd, args, opts = {}) {
+  const timeoutMs = opts.timeout ?? 30_000;
   return new Promise((resolve) => {
-    const proc = childProcess.spawn(cmd, args, {
-      ...opts,
+    let resolved = false;
+    const finish = (result) => { if (!resolved) { resolved = true; clearTimeout(timer); resolve(result); } };
+
+    const spawnOpts = {
       env: {
         ...process.env,
         OPENCLAW_STATE_DIR: STATE_DIR,
         OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
       },
-    });
+    };
+    // Only pass through safe opts (not 'timeout' which isn't a spawn option)
+    if (opts.stdio) spawnOpts.stdio = opts.stdio;
+    if (opts.cwd) spawnOpts.cwd = opts.cwd;
+
+    const proc = childProcess.spawn(cmd, args, spawnOpts);
 
     let out = "";
     proc.stdout?.on("data", (d) => (out += d.toString("utf8")));
@@ -749,10 +896,17 @@ function runCmd(cmd, args, opts = {}) {
 
     proc.on("error", (err) => {
       out += `\n[spawn error] ${String(err)}\n`;
-      resolve({ code: 127, output: out });
+      finish({ code: 127, output: out });
     });
 
-    proc.on("close", (code) => resolve({ code: code ?? 0, output: out }));
+    proc.on("close", (code) => finish({ code: code ?? 0, output: out }));
+
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGTERM"); } catch {}
+      setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 2000);
+      out += `\n[timeout] command killed after ${timeoutMs}ms\n`;
+      finish({ code: 124, output: out });
+    }, timeoutMs);
   });
 }
 
@@ -775,7 +929,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       return res.status(400).json({ ok: false, output: `Setup input error: ${String(err)}` });
     }
 
-    const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
+    const onboard = await runCmd(getOpenClawNode(), clawArgs(onboardArgs));
 
   let extra = "";
 
@@ -787,14 +941,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     // (We also enforce loopback bind since the wrapper proxies externally.)
     // IMPORTANT: Set both gateway.auth.token (server-side) and gateway.remote.token (client-side)
     // to the same value so the Control UI can connect without "token mismatch" errors.
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.mode", "token"]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
+    await runCmd(getOpenClawNode(), clawArgs(["config", "set", "gateway.auth.mode", "token"]));
+    await runCmd(getOpenClawNode(), clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
+    await runCmd(getOpenClawNode(), clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
     // NOTE: Do NOT persist gateway.bind or gateway.port to the config file — they are
     // managed exclusively via CLI args in startGateway(). Persisting them can cause
     // schema-validation errors when OpenClaw upgrades change the config schema.
-    // await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
-    // await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+    // await runCmd(getOpenClawNode(), clawArgs(["config", "set", "gateway.bind", "loopback"]));
+    // await runCmd(getOpenClawNode(), clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
 
     // Copy default workspace files (AGENTS.md, skills/) if not already present.
     const defaultWorkspaceDir = path.join(process.cwd(), "workspace");
@@ -854,7 +1008,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       const configKey = key === "maxConcurrent" || key === "subagents" || key === "heartbeat"
         ? `agents.defaults.${key}`
         : `agents.defaults.${key}`;
-      await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", configKey, JSON.stringify(val)]));
+      await runCmd(getOpenClawNode(), clawArgs(["config", "set", "--json", configKey, JSON.stringify(val)]));
     }
     extra += `\n[cost] applied cost-optimized defaults (cheap heartbeat, context pruning, memory compaction)`;
 
@@ -868,7 +1022,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         defaultSessionKey: "hook:ingress",
       };
       const hooksSet = await runCmd(
-        OPENCLAW_NODE,
+        getOpenClawNode(),
         clawArgs(["config", "set", "--json", "hooks", JSON.stringify(hooksCfg)]),
       );
       extra += `\n[hooks] exit=${hooksSet.code} (webhook bridge ${hooksSet.code === 0 ? "enabled" : "failed"})\n${hooksSet.output || "(no output)"}`;
@@ -902,16 +1056,16 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         };
 
         // Ensure we merge in this provider rather than replacing other providers.
-        await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "models.mode", "merge"]));
+        await runCmd(getOpenClawNode(), clawArgs(["config", "set", "models.mode", "merge"]));
         const set = await runCmd(
-          OPENCLAW_NODE,
+          getOpenClawNode(),
           clawArgs(["config", "set", "--json", `models.providers.${providerId}`, JSON.stringify(providerCfg)]),
         );
         extra += `\n[custom provider] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
       }
     }
 
-    const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+    const channelsHelp = await runCmd(getOpenClawNode(), clawArgs(["channels", "add", "--help"]));
     const helpText = channelsHelp.output || "";
 
     const supports = (name) => helpText.includes(name);
@@ -930,10 +1084,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           streamMode: "partial",
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          getOpenClawNode(),
           clawArgs(["config", "set", "--json", "channels.telegram", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.telegram"]));
+        const get = await runCmd(getOpenClawNode(), clawArgs(["config", "get", "channels.telegram"]));
         extra += `\n[telegram config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[telegram verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -953,10 +1107,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           },
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          getOpenClawNode(),
           clawArgs(["config", "set", "--json", "channels.discord", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.discord"]));
+        const get = await runCmd(getOpenClawNode(), clawArgs(["config", "get", "channels.discord"]));
         extra += `\n[discord config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[discord verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -972,10 +1126,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           appToken: payload.slackAppToken?.trim() || undefined,
         };
         const set = await runCmd(
-          OPENCLAW_NODE,
+          getOpenClawNode(),
           clawArgs(["config", "set", "--json", "channels.slack", JSON.stringify(cfgObj)]),
         );
-        const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.slack"]));
+        const get = await runCmd(getOpenClawNode(), clawArgs(["config", "get", "channels.slack"]));
         extra += `\n[slack config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
         extra += `\n[slack verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
       }
@@ -998,8 +1152,8 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 });
 
 app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
-  const v = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
-  const help = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+  const v = await runCmd(getOpenClawNode(), clawArgs(["--version"]));
+  const help = await runCmd(getOpenClawNode(), clawArgs(["channels", "add", "--help"]));
 
   res.json({
     wrapper: {
@@ -1023,8 +1177,8 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       railwayCommit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     },
     openclaw: {
-      entry: OPENCLAW_ENTRY,
-      node: OPENCLAW_NODE,
+      entry: getOpenClawEntry(),
+      node: getOpenClawNode(),
       version: v.output.trim(),
       channelsAddHelpIncludesTelegram: help.output.includes("telegram"),
     },
@@ -1108,35 +1262,35 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
     }
 
     if (cmd === "openclaw.version") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["--version"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.status") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["status"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["status"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.health") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["health"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["health"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.doctor") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["doctor"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.logs.tail") {
       const lines = Math.max(50, Math.min(1000, Number.parseInt(arg || "200", 10) || 200));
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["logs", "--tail", String(lines)]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["logs", "--tail", String(lines)]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.config.get") {
       if (!arg) return res.status(400).json({ ok: false, error: "Missing config path" });
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", arg]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["config", "get", arg]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
     // Device management commands (for fixing "disconnected (1008): pairing required")
     if (cmd === "openclaw.devices.list") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["devices", "list"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.devices.approve") {
@@ -1147,20 +1301,20 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_-]+$/.test(requestId)) {
         return res.status(400).json({ ok: false, error: "Invalid device request ID" });
       }
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["devices", "approve", requestId]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
     // Plugin management commands
     if (cmd === "openclaw.plugins.list") {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "list"]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["plugins", "list"]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
     if (cmd === "openclaw.plugins.enable") {
       const name = String(arg || "").trim();
       if (!name) return res.status(400).json({ ok: false, error: "Missing plugin name" });
       if (!/^[A-Za-z0-9_-]+$/.test(name)) return res.status(400).json({ ok: false, error: "Invalid plugin name" });
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", name]));
+      const r = await runCmd(getOpenClawNode(), clawArgs(["plugins", "enable", name]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 
@@ -1204,9 +1358,10 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_./-]+$/.test(ref) && !/^--(?:stable|beta|canary)$/.test(ref)) {
         return res.status(400).json({ ok: false, error: "Invalid ref (use --stable, --beta, --canary, or a branch/tag/SHA)" });
       }
-      const r = await runCmd("/bin/bash", ["/app/scripts/update-openclaw.sh", ref]);
+      const r = await runCmd("/bin/bash", ["/app/scripts/update-openclaw.sh", ref], { timeout: 600_000 });
       if (r.code === 0) {
         process.env.OPENCLAW_ENTRY = "/data/openclaw/dist/entry.js";
+        resetCrashCounter();
         await restartGateway();
         return res.json({ ok: true, output: redactSecrets(r.output) + "\nGateway restarted with updated OpenClaw.\n" });
       }
@@ -1246,7 +1401,10 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
       fs.copyFileSync(p, backupPath);
     }
 
-    fs.writeFileSync(p, content, { encoding: "utf8", mode: 0o600 });
+    atomicWriteFile(p, content);
+
+    // Config save exits safe mode.
+    resetCrashCounter();
 
     // Apply immediately.
     if (isConfigured()) {
@@ -1264,13 +1422,13 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
   if (!channel || !code) {
     return res.status(400).json({ ok: false, error: "Missing channel or code" });
   }
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "approve", String(channel), String(code)]));
+  const r = await runCmd(getOpenClawNode(), clawArgs(["pairing", "approve", String(channel), String(code)]));
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: r.output });
 });
 
 // Device pairing helper (list + approve) to avoid needing SSH.
 app.get("/setup/api/devices/pending", requireSetupAuth, async (_req, res) => {
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
+  const r = await runCmd(getOpenClawNode(), clawArgs(["devices", "list"]));
   const output = redactSecrets(r.output);
   const requestIds = extractDeviceRequestIds(output);
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, requestIds, output });
@@ -1280,7 +1438,7 @@ app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
   const requestId = String((req.body && req.body.requestId) || "").trim();
   if (!requestId) return res.status(400).json({ ok: false, error: "Missing device request ID" });
   if (!/^[A-Za-z0-9_-]+$/.test(requestId)) return res.status(400).json({ ok: false, error: "Invalid device request ID" });
-  const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
+  const r = await runCmd(getOpenClawNode(), clawArgs(["devices", "approve", requestId]));
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
 });
 
@@ -1477,12 +1635,21 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   console.log(`[wrapper] listening on :${PORT}`);
   console.log(`[wrapper] state dir: ${STATE_DIR}`);
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
+  console.log(`[wrapper] entry point: ${getOpenClawEntry()}`);
   console.log(`[wrapper] gateway token: ${OPENCLAW_GATEWAY_TOKEN ? "(set)" : "(missing)"}`);
   console.log(`[wrapper] gateway target: ${GATEWAY_TARGET}`);
   console.log(`[wrapper] hooks token: ${OPENCLAW_HOOKS_TOKEN ? "(set)" : "(not set - n8n bridge disabled)"}`);
   if (N8N_WEBHOOK_URL) console.log(`[wrapper] n8n webhook url: ${N8N_WEBHOOK_URL}`);
   if (!SETUP_PASSWORD) {
     console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
+  }
+
+  // Log OpenClaw version for diagnostics.
+  try {
+    const versionResult = await runCmd(getOpenClawNode(), clawArgs(["--version"]), { timeout: 10_000 });
+    console.log(`[wrapper] openclaw version: ${versionResult.output.trim()}`);
+  } catch {
+    console.warn("[wrapper] could not determine openclaw version");
   }
 
   // Auto-configure webhook hooks for n8n bridge on boot (idempotent).
@@ -1497,7 +1664,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
         defaultSessionKey: "hook:ingress",
       };
       await runCmd(
-        OPENCLAW_NODE,
+        getOpenClawNode(),
         clawArgs(["config", "set", "--json", "hooks", JSON.stringify(hooksCfg)]),
       );
       console.log("[wrapper] webhook hooks configured");
@@ -1522,7 +1689,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       // Auto-approve any pending device pairing requests so the wrapper proxy
       // and remote clients can connect without manual intervention.
       try {
-        const devList = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list", "--json"]));
+        const devList = await runCmd(getOpenClawNode(), clawArgs(["devices", "list", "--json"]));
         if (devList.code === 0 && devList.output.trim()) {
           try {
             const devices = JSON.parse(devList.output);
@@ -1531,7 +1698,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
             for (const d of pending) {
               const id = d.requestId || d.id;
               if (id) {
-                const r = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", id]));
+                const r = await runCmd(getOpenClawNode(), clawArgs(["devices", "approve", id]));
                 console.log(`[wrapper] auto-approved device ${id} (exit=${r.code})`);
               }
             }
@@ -1562,17 +1729,38 @@ server.on("upgrade", async (req, socket, head) => {
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 
-process.on("SIGTERM", async () => {
-  // Best-effort shutdown
-  try {
-    if (posthog) await posthog.shutdown();
-  } catch {
-    // ignore
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[wrapper] received ${signal}, shutting down gracefully...`);
+
+  // 1. Stop accepting new HTTP connections
+  const serverClosePromise = new Promise((resolve) => {
+    server.close(resolve);
+    if (server.closeIdleConnections) server.closeIdleConnections();
+  });
+
+  // 2. Stop gateway child (wait up to 5s, then force kill)
+  if (gatewayProc) {
+    try { gatewayProc.kill("SIGTERM"); } catch {}
+    await Promise.race([
+      new Promise((resolve) => { gatewayProc?.on("exit", resolve); }),
+      sleep(5000),
+    ]);
+    if (gatewayProc) {
+      try { gatewayProc.kill("SIGKILL"); } catch {}
+    }
   }
-  try {
-    if (gatewayProc) gatewayProc.kill("SIGTERM");
-  } catch {
-    // ignore
-  }
+
+  // 3. Flush analytics
+  try { if (posthog) await posthog.shutdown(); } catch {}
+
+  // 4. Drain HTTP (max 3s)
+  await Promise.race([serverClosePromise, sleep(3000)]);
+
+  console.log("[wrapper] shutdown complete");
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

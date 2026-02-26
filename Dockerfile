@@ -13,7 +13,7 @@ RUN corepack enable
 
 WORKDIR /openclaw
 
-ARG OPENCLAW_GIT_REF=v2026.2.19
+ARG OPENCLAW_GIT_REF=v2026.2.25
 RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git .
 
 RUN set -eux; \
@@ -32,10 +32,10 @@ RUN pnpm ui:install && pnpm ui:build
 FROM node:22-bookworm
 ENV NODE_ENV=production
 
-# Install system deps + Tailscale in a single layer for reliability
+# Install system deps + Tailscale + tini in a single layer for reliability
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates curl build-essential gcc g++ make procps file git \
+    tini ca-certificates curl build-essential gcc g++ make procps file git \
     python3 python3-pip pkg-config sudo iptables iproute2 dnsutils \
   && curl -fsSL https://tailscale.com/install.sh | sh \
   && rm -rf /var/lib/apt/lists/*
@@ -71,8 +71,8 @@ RUN npm install -g npm@11 @composio/rube-mcp \
 # Clone /last30days research skill
 RUN git clone --depth 1 https://github.com/mvanhorn/last30days-skill.git /root/.claude/skills/last30days
 
-# Force fresh build — v2026.02.19
-RUN echo "build-v3"
+# Force fresh build — v2026.02.25 + reliability hardening
+RUN echo "build-v4"
 COPY src ./src
 COPY workspace ./workspace
 COPY scripts ./scripts
@@ -88,4 +88,5 @@ RUN mkdir -p "$PNPM_HOME"
 
 ENV PORT=8080
 EXPOSE 8080
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/app/start.sh"]
