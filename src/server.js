@@ -160,7 +160,17 @@ function configPath() {
 
 function isConfigured() {
   try {
-    return resolveConfigCandidates().some((candidate) => fs.existsSync(candidate));
+    return resolveConfigCandidates().some((candidate) => {
+      if (!fs.existsSync(candidate)) return false;
+      try {
+        const raw = fs.readFileSync(candidate, "utf8").trim();
+        if (!raw) return false;
+        JSON.parse(raw);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }
@@ -177,7 +187,19 @@ function cleanupStaleConfigKeys() {
     const p = configPath();
     if (!fs.existsSync(p)) return;
     const raw = fs.readFileSync(p, "utf8");
-    const cfg = JSON.parse(raw);
+    if (!raw.trim()) {
+      console.warn("[wrapper] config file is empty; removing to allow re-setup");
+      fs.unlinkSync(p);
+      return;
+    }
+    let cfg;
+    try {
+      cfg = JSON.parse(raw);
+    } catch (parseErr) {
+      console.warn(`[wrapper] config file is corrupt; removing to allow re-setup: ${parseErr.message}`);
+      fs.unlinkSync(p);
+      return;
+    }
     let changed = false;
     if (cfg.gateway?.bind !== undefined) {
       delete cfg.gateway.bind;
@@ -471,6 +493,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         <option value="openclaw.devices.approve">openclaw devices approve &lt;requestId&gt;</option>
         <option value="openclaw.plugins.list">openclaw plugins list</option>
         <option value="openclaw.plugins.enable">openclaw plugins enable &lt;name&gt;</option>
+        <option value="claude.usage">claude usage (API/token usage check)</option>
         <option value="openclaw.update">openclaw.update (--stable | --beta | --canary | ref)</option>
       </select>
       <input id="consoleArg" placeholder="Optional arg (e.g. 200, gateway.port)" style="flex: 1" />
@@ -1051,6 +1074,7 @@ const ALLOWED_CONSOLE_COMMANDS = new Set([
   // Plugin management
   "openclaw.plugins.list",
   "openclaw.plugins.enable",
+  "claude.usage",
 
   // Hot update
   "openclaw.update",
@@ -1138,6 +1162,40 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_-]+$/.test(name)) return res.status(400).json({ ok: false, error: "Invalid plugin name" });
       const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", name]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Claude CLI usage check (tries multiple command shapes for compatibility).
+    if (cmd === "claude.usage") {
+      const attempts = [
+        ["usage"],
+        ["usage", "--json"],
+        ["billing", "usage"],
+        ["billing", "usage", "--json"],
+      ];
+
+      let lastOutput = "";
+      for (const args of attempts) {
+        const r = await runCmd("claude", args);
+        lastOutput = r.output || lastOutput;
+        if (r.code === 0) {
+          const label = `$ claude ${args.join(" ")}`;
+          const body = (r.output || "").trim() || "(no output)";
+          return res.json({ ok: true, output: `${label}\n${redactSecrets(body)}\n` });
+        }
+      }
+
+      const help = await runCmd("claude", ["--help"]);
+      const out = [
+        "Claude CLI usage check failed.",
+        "Tried: claude usage, claude usage --json, claude billing usage, claude billing usage --json",
+        "",
+        "Last command output:",
+        redactSecrets((lastOutput || "(no output)").trim()),
+        "",
+        "claude --help:",
+        redactSecrets((help.output || "(no output)").trim()),
+      ].join("\n");
+      return res.status(500).json({ ok: false, output: out });
     }
 
     // Hot update: pull + build OpenClaw to /data/openclaw, then restart gateway
