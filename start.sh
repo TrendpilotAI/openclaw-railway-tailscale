@@ -66,5 +66,9 @@ elif [ -f /data/openclaw/dist/entry.js ]; then
   echo "[update] Using previously updated OpenClaw from /data/openclaw"
 fi
 
+# --- pnpm global bin ---
+export PNPM_HOME="${PNPM_HOME:-/root/.local/share/pnpm}"
+export PATH="$PNPM_HOME:$PATH"
+
 # --- Start OpenClaw ---
 exec node --import /app/src/instrumentation.mjs /app/src/server.js

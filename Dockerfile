@@ -82,6 +82,10 @@ RUN chmod +x /app/start.sh /app/scripts/*.sh
 # Create tailscale state directory
 RUN mkdir -p /data/tailscale
 
+ENV PNPM_HOME="/root/.local/share/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+RUN mkdir -p "$PNPM_HOME"
+
 ENV PORT=8080
 EXPOSE 8080
 CMD ["/app/start.sh"]
