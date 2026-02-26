@@ -279,15 +279,46 @@ async function cleanupStaleConfigKeys() {
       delete cfg.gateway.bind;
       changed = true;
     }
-    if (changed) {
-      atomicWriteFile(p, JSON.stringify(cfg, null, 2));
-      console.log("[wrapper] cleaned stale gateway.bind from config (managed via CLI args)");
+
+    // Remove unrecognized nested keys that doctor --fix sometimes can't handle.
+    // These cause crash loops because the gateway refuses to start with invalid config.
+    const STALE_KEYS = [
+      ["channels", "discord", "allowedChannels"],
+      ["channels", "discord", "streaming"],
+      ["channels", "telegram", "streaming"],
+      ["channels", "slack", "nativeStreaming"],
+      ["commands", "ownerDisplay"],
+    ];
+    for (const keyPath of STALE_KEYS) {
+      let obj = cfg;
+      for (let i = 0; i < keyPath.length - 1; i++) {
+        obj = obj?.[keyPath[i]];
+        if (!obj || typeof obj !== "object") break;
+      }
+      if (obj && typeof obj === "object" && keyPath[keyPath.length - 1] in obj) {
+        delete obj[keyPath[keyPath.length - 1]];
+        changed = true;
+        console.log(`[wrapper] removed stale config key: ${keyPath.join(".")}`);
+      }
     }
 
-    // Run openclaw doctor --fix to strip any unrecognized keys from the schema.
+    // Fix known invalid enum values that crash the gateway.
+    const VALID_GROUP_POLICIES = new Set(["open", "disabled", "allowlist"]);
+    if (cfg.channels?.discord?.groupPolicy && !VALID_GROUP_POLICIES.has(cfg.channels.discord.groupPolicy)) {
+      console.log(`[wrapper] fixing invalid discord.groupPolicy: "${cfg.channels.discord.groupPolicy}" → "disabled"`);
+      cfg.channels.discord.groupPolicy = "disabled";
+      changed = true;
+    }
+
+    if (changed) {
+      atomicWriteFile(p, JSON.stringify(cfg, null, 2));
+      console.log("[wrapper] config cleaned up");
+    }
+
+    // Run openclaw doctor --fix to strip any remaining unrecognized keys from the schema.
     // This is the primary defense against crash loops caused by config drift.
     console.log("[wrapper] running openclaw doctor --fix to validate config...");
-    const result = await runCmd(getOpenClawNode(), clawArgs(["doctor", "--fix"]), { timeout: 30_000 });
+    const result = await runCmd(getOpenClawNode(), clawArgs(["doctor", "--fix"]), { timeout: 60_000 });
     if (result.code === 0) {
       console.log("[wrapper] doctor --fix completed successfully");
     } else {
@@ -362,6 +393,17 @@ async function waitForGatewayReady(opts = {}) {
 async function startGateway() {
   if (gatewayProc) return;
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
+
+  // Wait for the port to be free before starting (prevents "already listening" errors after crashes).
+  const portFreeDeadline = Date.now() + 10_000;
+  while (await checkPort(INTERNAL_GATEWAY_HOST, INTERNAL_GATEWAY_PORT, 500)) {
+    if (Date.now() > portFreeDeadline) {
+      console.warn(`[wrapper] port ${INTERNAL_GATEWAY_PORT} still in use after 10s; proceeding anyway`);
+      break;
+    }
+    console.log(`[wrapper] waiting for port ${INTERNAL_GATEWAY_PORT} to be released...`);
+    await sleep(1000);
+  }
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
@@ -1645,9 +1687,11 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   }
 
   // Log OpenClaw version for diagnostics.
+  // The --version command may also emit config warnings to stderr, so extract just the version line.
   try {
     const versionResult = await runCmd(getOpenClawNode(), clawArgs(["--version"]), { timeout: 10_000 });
-    console.log(`[wrapper] openclaw version: ${versionResult.output.trim()}`);
+    const versionLine = (versionResult.output || "").split("\n").find((l) => /^\d+\.\d+/.test(l.trim()));
+    console.log(`[wrapper] openclaw version: ${versionLine?.trim() || versionResult.output.trim().slice(0, 100)}`);
   } catch {
     console.warn("[wrapper] could not determine openclaw version");
   }
@@ -1679,7 +1723,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   // Auto-start the gateway if already configured so polling channels (Telegram/Discord/etc.)
   // work even if nobody visits the web UI.
   if (isConfigured()) {
-    cleanupStaleConfigKeys();
+    await cleanupStaleConfigKeys();
     console.log("[wrapper] config detected; starting gateway...");
     try {
       await ensureGatewayRunning();
