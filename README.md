@@ -473,6 +473,43 @@ Open `/setup`, go to the Debug console, select `openclaw.update`, and enter a re
 
 Your config and workspace always persist on the `/data` volume. The original OpenClaw in the Docker image is never modified and serves as a fallback if an update fails.
 
+### Safe service-only restart
+
+To avoid accidentally touching companion services (`n8n`, `postgres`, `redis`, `temporal`), use:
+
+```bash
+scripts/safe-restart-openclaw.sh --yes
+```
+
+This helper verifies linked Railway context and only runs:
+
+```bash
+railway restart -s openclaw-railway-template -y
+```
+
+### One-command Mac connect (OpenClaw + Tailscale)
+
+To configure your local Mac CLI against the Railway gateway and ensure Tailscale is on:
+
+```bash
+scripts/connect-mac-to-railway-gateway.sh
+```
+
+This script:
+- Verifies `openclaw` and `tailscale` CLIs are installed
+- Runs `tailscale up` when disconnected
+- Fetches `gateway.auth.token` from Railway (if not provided)
+- Sets `gateway.remote.url` + `gateway.remote.token` in local OpenClaw config
+- Validates with a live `openclaw gateway call health --json`
+
+Optional flags:
+
+```bash
+scripts/connect-mac-to-railway-gateway.sh --host openclaw-railway.taild36ce1.ts.net
+scripts/connect-mac-to-railway-gateway.sh --token <gateway-token>
+scripts/connect-mac-to-railway-gateway.sh --skip-token-fetch
+```
+
 ## Troubleshooting
 
 ### Gateway not starting

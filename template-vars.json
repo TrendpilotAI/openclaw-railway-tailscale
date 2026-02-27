@@ -1,0 +1,637 @@
+{
+  "_comment": "Canonical variable definitions for the OpenClaw Railway template. Defines the DESIRED state for each service. The automation script (scripts/update-template.js) uses this to remove leaked shared variables and add descriptions via the Railway template editor UI.",
+  "services": {
+    "Redis": {
+      "vars": {
+        "REDIS_PASSWORD": {
+          "description": "Auto-generated 32-character Redis password",
+          "isOptional": false
+        },
+        "REDISPASSWORD": {
+          "description": "Alias for REDIS_PASSWORD used by legacy Redis clients",
+          "isOptional": false,
+          "defaultValue": "${{REDIS_PASSWORD}}"
+        },
+        "REDISHOST": {
+          "description": "Redis private hostname on the Railway internal network",
+          "isOptional": false,
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}"
+        },
+        "REDISPORT": {
+          "description": "Redis port number (default 6379)",
+          "isOptional": false
+        },
+        "REDISUSER": {
+          "description": "Redis username (empty string = no username auth)",
+          "isOptional": false
+        },
+        "REDIS_URL": {
+          "description": "Redis connection string for Railway internal (private) network",
+          "isOptional": false,
+          "defaultValue": "redis://${{REDISUSER}}:${{REDIS_PASSWORD}}@${{REDISHOST}}:${{REDISPORT}}"
+        },
+        "REDIS_PUBLIC_URL": {
+          "description": "Redis connection string via TCP proxy for external access",
+          "isOptional": false,
+          "defaultValue": "redis://${{REDISUSER}}:${{REDIS_PASSWORD}}@${{RAILWAY_TCP_PROXY_DOMAIN}}:${{RAILWAY_TCP_PROXY_PORT}}"
+        },
+        "RAILWAY_RUN_UID": {
+          "description": "UID for Railway process isolation (managed by Railway)",
+          "isOptional": false
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "MODAL_TOKEN_ID",
+        "VOYAGE_API_KEY",
+        "N8N_WEBHOOK_URL",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        "OPENCLAW_HOOKS_TOKEN"
+      ]
+    },
+    "Postgres": {
+      "vars": {
+        "PGDATA": {
+          "description": "PostgreSQL data directory path",
+          "isOptional": false
+        },
+        "PGHOST": {
+          "description": "PostgreSQL hostname on the Railway internal network",
+          "isOptional": false,
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}"
+        },
+        "PGPORT": {
+          "description": "PostgreSQL port number (default 5432)",
+          "isOptional": false
+        },
+        "PGUSER": {
+          "description": "PostgreSQL username (alias for POSTGRES_USER)",
+          "isOptional": false,
+          "defaultValue": "${{POSTGRES_USER}}"
+        },
+        "PGDATABASE": {
+          "description": "PostgreSQL database name (alias for POSTGRES_DB)",
+          "isOptional": false,
+          "defaultValue": "${{POSTGRES_DB}}"
+        },
+        "PGPASSWORD": {
+          "description": "PostgreSQL password (alias for POSTGRES_PASSWORD)",
+          "isOptional": false,
+          "defaultValue": "${{POSTGRES_PASSWORD}}"
+        },
+        "POSTGRES_DB": {
+          "description": "PostgreSQL database name for n8n and Postiz data",
+          "isOptional": false
+        },
+        "POSTGRES_USER": {
+          "description": "PostgreSQL username",
+          "isOptional": false
+        },
+        "POSTGRES_PASSWORD": {
+          "description": "Auto-generated 32-character PostgreSQL password",
+          "isOptional": false
+        },
+        "DATABASE_URL": {
+          "description": "PostgreSQL connection string for Railway internal network",
+          "isOptional": false,
+          "defaultValue": "postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{PGHOST}}:${{PGPORT}}/${{POSTGRES_DB}}"
+        },
+        "DATABASE_PUBLIC_URL": {
+          "description": "PostgreSQL connection string via TCP proxy for external access",
+          "isOptional": false,
+          "defaultValue": "postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_TCP_PROXY_DOMAIN}}:${{RAILWAY_TCP_PROXY_PORT}}/${{POSTGRES_DB}}"
+        },
+        "SSL_CERT_DAYS": {
+          "description": "SSL certificate validity in days (default 820)",
+          "isOptional": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "description": "Seconds to wait for in-flight queries before stopping (default 5)",
+          "isOptional": false
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "MODAL_TOKEN_ID",
+        "VOYAGE_API_KEY",
+        "N8N_WEBHOOK_URL",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        "OPENCLAW_HOOKS_TOKEN"
+      ]
+    },
+    "Primary": {
+      "note": "n8n primary instance (UI + workflow editor + webhook receiver)",
+      "vars": {
+        "PORT": {
+          "description": "n8n HTTP server port (Railway auto-assigns)",
+          "isOptional": false
+        },
+        "DB_TYPE": {
+          "description": "Database backend for n8n: postgresdb",
+          "isOptional": false
+        },
+        "WEBHOOK_URL": {
+          "description": "Public URL where n8n receives incoming webhook calls",
+          "isOptional": false,
+          "defaultValue": "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+        },
+        "NODE_OPTIONS": {
+          "description": "Node.js runtime flags (e.g. --max-old-space-size=4096)",
+          "isOptional": false
+        },
+        "EXECUTIONS_MODE": {
+          "description": "Execution mode: queue distributes work to Worker instances",
+          "isOptional": false
+        },
+        "N8N_LISTEN_ADDRESS": {
+          "description": "IP address n8n binds to (0.0.0.0 = all interfaces)",
+          "isOptional": false
+        },
+        "N8N_EDITOR_BASE_URL": {
+          "description": "Public URL for the n8n editor UI",
+          "isOptional": false,
+          "defaultValue": "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+        },
+        "N8N_RUNNERS_ENABLED": {
+          "description": "Enable n8n task runners for sandboxed code execution",
+          "isOptional": false
+        },
+        "N8N_ENCRYPTION_KEY": {
+          "description": "Secret key for encrypting stored credentials at rest (auto-generated)",
+          "isOptional": false
+        },
+        "N8N_TRUST_PROXY": {
+          "description": "Trust X-Forwarded-For and other reverse proxy headers",
+          "isOptional": false
+        },
+        "DB_POSTGRESDB_HOST": {
+          "description": "PostgreSQL hostname from the Postgres service (internal network)",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.PGHOST}}"
+        },
+        "DB_POSTGRESDB_PORT": {
+          "description": "PostgreSQL port from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.PGPORT}}"
+        },
+        "DB_POSTGRESDB_USER": {
+          "description": "PostgreSQL username from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_USER}}"
+        },
+        "DB_POSTGRESDB_DATABASE": {
+          "description": "PostgreSQL database name from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_DB}}"
+        },
+        "DB_POSTGRESDB_PASSWORD": {
+          "description": "PostgreSQL password from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_PASSWORD}}"
+        },
+        "QUEUE_BULL_REDIS_HOST": {
+          "description": "Redis hostname for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISHOST}}"
+        },
+        "QUEUE_BULL_REDIS_PORT": {
+          "description": "Redis port for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISPORT}}"
+        },
+        "QUEUE_BULL_REDIS_PASSWORD": {
+          "description": "Redis password for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDIS_PASSWORD}}"
+        },
+        "QUEUE_BULL_REDIS_USERNAME": {
+          "description": "Redis username for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISUSER}}"
+        },
+        "QUEUE_BULL_REDIS_DUALSTACK": {
+          "description": "Enable IPv4/IPv6 dual-stack for Redis queue connections",
+          "isOptional": false
+        },
+        "ENABLE_ALPINE_PRIVATE_NETWORKING": {
+          "description": "Enable Alpine Linux private networking (set to true)",
+          "isOptional": false
+        },
+        "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS": {
+          "description": "Route manual test executions through Worker queue (true/false)",
+          "isOptional": false
+        },
+        "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS": {
+          "description": "Enforce strict file permissions on n8n configuration files",
+          "isOptional": false
+        },
+        "OPENCLAW_HOOKS_TOKEN": {
+          "description": "Shared secret for authenticating requests between OpenClaw and n8n",
+          "isOptional": true,
+          "defaultValue": "${{openclaw-railway-template.OPENCLAW_HOOKS_TOKEN}}"
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "MODAL_TOKEN_ID",
+        "VOYAGE_API_KEY",
+        "N8N_WEBHOOK_URL",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        " N8N_TRUST_PROXY"
+      ]
+    },
+    "Worker": {
+      "note": "n8n worker instance (queue consumer, no UI, no webhooks)",
+      "vars": {
+        "PORT": {
+          "description": "n8n Worker HTTP port (Railway auto-assigns; worker is internal only)",
+          "isOptional": false
+        },
+        "DB_TYPE": {
+          "description": "Database backend for n8n: postgresdb",
+          "isOptional": false
+        },
+        "WEBHOOK_URL": {
+          "description": "Public URL of the Primary n8n instance (workers share this base URL)",
+          "isOptional": false,
+          "defaultValue": "https://${{Primary.RAILWAY_PUBLIC_DOMAIN}}"
+        },
+        "NODE_OPTIONS": {
+          "description": "Node.js runtime flags (e.g. --max-old-space-size=4096)",
+          "isOptional": false
+        },
+        "EXECUTIONS_MODE": {
+          "description": "Execution mode: queue processes jobs from the BullMQ queue",
+          "isOptional": false
+        },
+        "N8N_LISTEN_ADDRESS": {
+          "description": "IP address n8n Worker binds to (0.0.0.0 = all interfaces)",
+          "isOptional": false
+        },
+        "N8N_RUNNERS_ENABLED": {
+          "description": "Enable n8n task runners for sandboxed code execution",
+          "isOptional": false
+        },
+        "N8N_ENCRYPTION_KEY": {
+          "description": "Must match Primary's key to decrypt stored credentials",
+          "isOptional": false,
+          "defaultValue": "${{Primary.N8N_ENCRYPTION_KEY}}"
+        },
+        "DB_POSTGRESDB_HOST": {
+          "description": "PostgreSQL hostname from the Postgres service (internal network)",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.PGHOST}}"
+        },
+        "DB_POSTGRESDB_PORT": {
+          "description": "PostgreSQL port from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.PGPORT}}"
+        },
+        "DB_POSTGRESDB_USER": {
+          "description": "PostgreSQL username from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_USER}}"
+        },
+        "DB_POSTGRESDB_DATABASE": {
+          "description": "PostgreSQL database name from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_DB}}"
+        },
+        "DB_POSTGRESDB_PASSWORD": {
+          "description": "PostgreSQL password from the Postgres service",
+          "isOptional": false,
+          "defaultValue": "${{Postgres.POSTGRES_PASSWORD}}"
+        },
+        "QUEUE_BULL_REDIS_HOST": {
+          "description": "Redis hostname for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISHOST}}"
+        },
+        "QUEUE_BULL_REDIS_PORT": {
+          "description": "Redis port for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISPORT}}"
+        },
+        "QUEUE_BULL_REDIS_PASSWORD": {
+          "description": "Redis password for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDIS_PASSWORD}}"
+        },
+        "QUEUE_BULL_REDIS_USERNAME": {
+          "description": "Redis username for BullMQ job queue (from Redis service)",
+          "isOptional": false,
+          "defaultValue": "${{Redis.REDISUSER}}"
+        },
+        "QUEUE_BULL_REDIS_DUALSTACK": {
+          "description": "Enable IPv4/IPv6 dual-stack for Redis queue connections",
+          "isOptional": false
+        },
+        "ENABLE_ALPINE_PRIVATE_NETWORKING": {
+          "description": "Enable Alpine Linux private networking (set to true)",
+          "isOptional": false
+        },
+        "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS": {
+          "description": "Route manual test executions through Worker queue (true/false)",
+          "isOptional": false
+        },
+        "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS": {
+          "description": "Enforce strict file permissions on n8n configuration files",
+          "isOptional": false
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "MODAL_TOKEN_ID",
+        "VOYAGE_API_KEY",
+        "N8N_WEBHOOK_URL",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        "OPENCLAW_HOOKS_TOKEN"
+      ]
+    },
+    "openclaw-railway-template": {
+      "note": "Main OpenClaw service. Keep all LLM/tool API keys — they are legitimate here.",
+      "vars": {
+        "PORT": {
+          "description": "Express wrapper HTTP port (Railway auto-assigns, default 8080)",
+          "isOptional": false
+        },
+        "CACHEBUST": {
+          "description": "Change this value to force a Docker rebuild (any string)",
+          "isOptional": true
+        },
+        "TAILSCALE_AUTHKEY": {
+          "description": "Tailscale auth key for joining your tailnet (generate at tailscale.com/settings/keys)",
+          "isOptional": false
+        },
+        "TAILSCALE_HOSTNAME": {
+          "description": "Tailscale device hostname (e.g. openclaw-railway)",
+          "isOptional": true
+        },
+        "TAILSCALE_SERVE": {
+          "description": "Expose OpenClaw on your tailnet via Tailscale Serve (yes/no)",
+          "isOptional": true
+        },
+        "ANTHROPIC_API_KEY": {
+          "description": "Anthropic API key for Claude models (required for default config)",
+          "isOptional": false
+        },
+        "OPENAI_API_KEY": {
+          "description": "OpenAI API key for GPT models",
+          "isOptional": true
+        },
+        "OPENROUTER_API_KEY": {
+          "description": "OpenRouter API key for routing across multiple LLM providers",
+          "isOptional": true
+        },
+        "DEEPSEEK_API_KEY": {
+          "description": "DeepSeek API key for DeepSeek Coder and reasoning models",
+          "isOptional": true
+        },
+        "GROK_API_KEY": {
+          "description": "xAI Grok API key for Grok models",
+          "isOptional": true
+        },
+        "KIMI_API_KEY": {
+          "description": "Moonshot AI key for Kimi long-context models",
+          "isOptional": true
+        },
+        "VOYAGE_API_KEY": {
+          "description": "Voyage AI key for embedding and reranking models",
+          "isOptional": true
+        },
+        "COMPOSIO_API_KEY": {
+          "description": "Composio API key for 250+ app integrations and OAuth flows",
+          "isOptional": true
+        },
+        "MODAL_TOKEN_ID": {
+          "description": "Modal token ID for serverless GPU compute workloads",
+          "isOptional": true
+        },
+        "MODAL_TOKEN_SECRET": {
+          "description": "Modal token secret for serverless GPU compute workloads",
+          "isOptional": true
+        },
+        "Railway_token": {
+          "description": "Railway API token for managing your deployment from OpenClaw",
+          "isOptional": true
+        },
+        "Railway_Api_key": {
+          "description": "Railway API key (legacy — prefer Railway_token)",
+          "isOptional": true
+        },
+        "GITHUB_TOKEN": {
+          "description": "GitHub personal access token for repository operations",
+          "isOptional": true
+        },
+        "SLACK_BOT_TOKEN": {
+          "description": "Slack bot token for posting messages to channels",
+          "isOptional": true
+        },
+        "N8N_API_KEY": {
+          "description": "n8n API key for triggering workflows programmatically",
+          "isOptional": true
+        },
+        "N8N_WEBHOOK_URL": {
+          "description": "Base URL of your n8n instance for webhook calls",
+          "isOptional": true,
+          "defaultValue": "https://${{Primary.RAILWAY_PUBLIC_DOMAIN}}"
+        },
+        "OPENCLAW_HOOKS_TOKEN": {
+          "description": "Shared secret for authenticating OpenClaw webhook callbacks to n8n",
+          "isOptional": true
+        },
+        "OPENCLAW_STATE_DIR": {
+          "description": "Directory for OpenClaw state and database files (default /data)",
+          "isOptional": true
+        },
+        "OPENCLAW_WORKSPACE_DIR": {
+          "description": "Directory for OpenClaw workspace and project files (default /data/workspace)",
+          "isOptional": true
+        },
+        "OPENCLAW_GATEWAY_TOKEN": {
+          "description": "Token for API access to the OpenClaw gateway (auto-generated if not set)",
+          "isOptional": true
+        },
+        "SETUP_USERNAME": {
+          "description": "Username for the setup wizard login (default: admin)",
+          "isOptional": true
+        },
+        "SETUP_PASSWORD": {
+          "description": "Password for the setup wizard login (auto-generated if not set)",
+          "isOptional": true
+        },
+        "AWS_ACCESS_KEY_ID": {
+          "description": "AWS or S3-compatible access key ID for object storage",
+          "isOptional": true
+        },
+        "AWS_SECRET_ACCESS_KEY": {
+          "description": "AWS or S3-compatible secret access key",
+          "isOptional": true
+        },
+        "AWS_DEFAULT_REGION": {
+          "description": "AWS region or S3-compatible region (e.g. us-east-1)",
+          "isOptional": true
+        },
+        "AWS_S3_BUCKET_NAME": {
+          "description": "S3 bucket name for file storage and backups",
+          "isOptional": true
+        },
+        "AWS_ENDPOINT_URL": {
+          "description": "Custom S3 endpoint URL for R2/MinIO/Backblaze — omit for AWS",
+          "isOptional": true
+        },
+        "CLOUDFLARE_API_KEY": {
+          "description": "Cloudflare API key for DNS management and edge operations",
+          "isOptional": true
+        },
+        "RUNWARE_API_KEY": {
+          "description": "Runware API key for fast image generation",
+          "isOptional": true
+        },
+        "CLAUDE_CODE_OAUTH_TOKEN": {
+          "description": "Claude Code OAuth token for AI-assisted coding inside OpenClaw",
+          "isOptional": true
+        },
+        "Openclaw_exec_security": {
+          "description": "OpenClaw execution security level (strict/standard/permissive)",
+          "isOptional": true
+        }
+      },
+      "remove": []
+    },
+    "Temporal": {
+      "vars": {
+        "DB": {
+          "description": "Database backend type for Temporal: postgresql",
+          "isOptional": false
+        },
+        "PORT": {
+          "description": "Temporal frontend gRPC port (default 7233)",
+          "isOptional": false
+        },
+        "DBNAME": {
+          "description": "Temporal main database name",
+          "isOptional": false
+        },
+        "DB_PORT": {
+          "description": "PostgreSQL port for Temporal database connection",
+          "isOptional": false
+        },
+        "POSTGRES_PWD": {
+          "description": "PostgreSQL password for Temporal (from Postgres service)",
+          "isOptional": false
+        },
+        "POSTGRES_USER": {
+          "description": "PostgreSQL user for Temporal (from Postgres service)",
+          "isOptional": false
+        },
+        "POSTGRES_SEEDS": {
+          "description": "PostgreSQL host:port for Temporal connection (e.g. postgres.railway.internal:5432)",
+          "isOptional": false
+        },
+        "VISIBILITY_DBNAME": {
+          "description": "Temporal visibility database name (for workflow search and list operations)",
+          "isOptional": false
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "MODAL_TOKEN_ID",
+        "VOYAGE_API_KEY",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        "OPENCLAW_HOOKS_TOKEN"
+      ]
+    },
+    "Postiz": {
+      "note": "Optional social media scheduling service",
+      "vars": {
+        "PORT": {
+          "description": "Postiz HTTP server port (Railway auto-assigns)",
+          "isOptional": false
+        },
+        "MAIN_URL": {
+          "description": "Public URL for Postiz — used for OAuth callbacks and email links",
+          "isOptional": false
+        },
+        "REDIS_URL": {
+          "description": "Redis connection string for Postiz queue and caching",
+          "isOptional": false
+        },
+        "IS_GENERAL": {
+          "description": "Set to true for self-hosted general deployment (not SaaS)",
+          "isOptional": false
+        },
+        "JWT_SECRET": {
+          "description": "Secret key for signing JWT authentication tokens (auto-generated)",
+          "isOptional": false
+        },
+        "DATABASE_URL": {
+          "description": "PostgreSQL connection string for Postiz data storage",
+          "isOptional": false
+        },
+        "FRONTEND_URL": {
+          "description": "Public URL for the Postiz frontend (usually same as MAIN_URL)",
+          "isOptional": false
+        },
+        "STORAGE_PROVIDER": {
+          "description": "Media storage backend: local for disk, or a cloud provider name",
+          "isOptional": false
+        },
+        "TEMPORAL_ADDRESS": {
+          "description": "Temporal service host:port for workflow orchestration (e.g. temporal:7233)",
+          "isOptional": false
+        },
+        "UPLOAD_DIRECTORY": {
+          "description": "Server-side directory path for uploaded media files",
+          "isOptional": false
+        },
+        "BACKEND_INTERNAL_URL": {
+          "description": "Internal URL for the Postiz API (used by SSR and background jobs)",
+          "isOptional": false
+        },
+        "DISABLE_REGISTRATION": {
+          "description": "Disable new user registration (false = open, true = admin-invite only)",
+          "isOptional": false
+        },
+        "NEXT_PUBLIC_BACKEND_URL": {
+          "description": "Public URL for the Postiz API (used by browser-side JavaScript)",
+          "isOptional": false
+        },
+        "NEXT_PUBLIC_UPLOAD_DIRECTORY": {
+          "description": "Public URL path for accessing uploaded media files in the browser",
+          "isOptional": false
+        }
+      },
+      "remove": [
+        "KIMI_API_KEY",
+        "Railway_token",
+        "VOYAGE_API_KEY",
+        "Railway_Api_key",
+        "COMPOSIO_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MODAL_TOKEN_SECRET",
+        "OPENCLAW_HOOKS_TOKEN"
+      ]
+    }
+  }
+}

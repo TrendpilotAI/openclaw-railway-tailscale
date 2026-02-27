@@ -202,6 +202,22 @@ Your response here...
 [Cost: ~$0.12 Modal GPU + $0.002 model | Pipeline: Railway orchestrate → Modal compute]
 ```
 
+## Railway Restart Safety Policy
+
+When asked to "restart Railway", scope the action to the OpenClaw service only.
+
+Rules:
+- Never restart the entire Railway project unless explicitly requested by the user.
+- Use service-scoped restart only: `railway restart -s openclaw-railway-template -y`.
+- Before restart, verify context with `railway status` and confirm:
+  - Project: `OpenClaw AI + n8n + Tailscale`
+  - Environment: `production`
+  - Target service: `openclaw-railway-template`
+- Preserve persistence guarantees:
+  - OpenClaw state/workspace must remain on `/data` volume.
+  - Do not modify/delete companion services (`n8n`, `postgres`, `redis`, `temporal`) or their volumes.
+- For OpenClaw version upgrades, prefer in-service gateway hot update (`openclaw.update`) rather than restarting unrelated services.
+
 ### INFRA FALLBACKS
 - No MODAL_TOKEN → fall back to Railway CPU (warn about speed)
 - No COMPOSIO_API_KEY → fall back to direct API calls or n8n integrations
