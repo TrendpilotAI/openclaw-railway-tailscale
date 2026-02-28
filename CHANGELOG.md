@@ -4,6 +4,15 @@ All notable changes to this project are documented here. This project follows [C
 
 ## [Unreleased]
 
+### Added
+- **Multi-provider auto-registration** — detects all API keys in Railway env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROK_API_KEY`, `KIMI_API_KEY`) and registers each as a provider, so OpenClaw can route to any of them
+- **Provider-aware model routing** — primary, subagent, and heartbeat models are auto-selected to match the user's auth provider (MiniMax M2.5 for orchestration, Opus 4.6 for coding, free NVIDIA model for heartbeats via OpenRouter)
+- **Heartbeat fallback chain** — 4 free-tier models (NVIDIA Nemotron, StepFun Flash, Upstage Solar, Arcee Trinity) with automatic failover so heartbeats never fail due to a single model going offline
+- When `ANTHROPIC_API_KEY` is detected alongside OpenRouter primary auth, coding subagents route through Anthropic direct for prompt caching and Max subscription rate limits
+
+### Fixed
+- **Cost defaults now match user's auth provider** — previously hardcoded `openai-codex/gpt-5.3-codex` as subagent model and `openrouter/openai/gpt-5-nano` as heartbeat model regardless of auth choice, causing "No API key" / "Unknown model" errors for users who authenticated with Anthropic, Google, or other providers
+
 ### Changed
 - Pinned OpenClaw to v2026.2.19 (was `main`). Notable upstream changes:
   - **Breaking:** Gateway auth defaults to token mode with auto-generation (set `gateway.auth.mode: "none"` for open loopback)

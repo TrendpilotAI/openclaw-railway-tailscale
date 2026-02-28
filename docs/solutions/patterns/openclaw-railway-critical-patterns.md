@@ -64,3 +64,49 @@ if (raw && JSON.parse(raw)) { /* actually configured */ }
 **Common symptom:** Gateway won't start after applying many config changes at once
 **Root cause:** One bad setting in a batch is hard to identify
 **Solution pattern:** Apply 3-5 settings at a time, verify gateway comes back, then add the next group. Use config bisection if the gateway breaks.
+
+---
+
+## Pattern 6: Never Hardcode Provider-Specific Models in Defaults
+
+**Common symptom:** "All models failed" / "No API key found for provider" despite having API keys set
+**Root cause:** Onboard only configures ONE provider. Hardcoded model IDs like `openai-codex/gpt-5.3-codex` fail when the user authenticated with a different provider. Other API keys in env vars are not auto-discovered.
+**Solution pattern:** Always select models based on the user's auth choice and detected providers. Register all available API keys as providers using `models.mode: merge`.
+
+```javascript
+// WRONG: Assumes a specific provider is configured
+subagents: { model: "openai-codex/gpt-5.3-codex" }
+
+// CORRECT: Select based on what's actually available
+const subagentModel = pickSubagentModel(authChoice, registeredProviders);
+subagents: { ...(subagentModel ? { model: subagentModel } : {}) }
+```
+
+**Examples:**
+- [multi-provider-model-routing-OpenClaw-20260227.md](../integration-issues/multi-provider-model-routing-OpenClaw-20260227.md)
+
+---
+
+## Pattern 7: Always Provide Fallbacks for Background/Automated Models
+
+**Common symptom:** Heartbeats or cron jobs silently stop working
+**Root cause:** Free-tier models on OpenRouter can go offline without notice
+**Solution pattern:** Use an array of fallback models for any automated task. Order by reliability (major providers first).
+
+```javascript
+// WRONG: Single model, no fallback
+heartbeat: { model: "openrouter/openai/gpt-5-nano" }
+
+// CORRECT: Fallback chain
+heartbeat: {
+  model: "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
+  fallbacks: [
+    "openrouter/stepfun/step-3.5-flash:free",
+    "openrouter/upstage/solar-pro-3:free",
+    "openrouter/arcee-ai/trinity-mini:free",
+  ]
+}
+```
+
+**Examples:**
+- [multi-provider-model-routing-OpenClaw-20260227.md](../integration-issues/multi-provider-model-routing-OpenClaw-20260227.md)
