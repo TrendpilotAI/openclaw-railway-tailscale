@@ -952,6 +952,190 @@ function runCmd(cmd, args, opts = {}) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Provider auto-registration
+// ---------------------------------------------------------------------------
+// OpenClaw's `onboard` only configures the ONE provider the user picks in the
+// wizard.  But users often set multiple API keys in Railway env vars.  This
+// map lets us detect every available key and register the corresponding
+// provider so OpenClaw can route to it.
+//
+// Format: ENV_VAR_NAME → { providerId, apiKeyRef, models[] }
+// `apiKeyRef` uses the ${VAR} syntax so OpenClaw resolves it at runtime rather
+// than baking the secret into the JSON config file.
+const PROVIDER_REGISTRY = {
+  ANTHROPIC_API_KEY: {
+    providerId: "anthropic",
+    apiKeyRef: "${ANTHROPIC_API_KEY}",
+    models: [
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+    ],
+  },
+  OPENAI_API_KEY: {
+    providerId: "openai",
+    apiKeyRef: "${OPENAI_API_KEY}",
+    models: [
+      { id: "gpt-4.1", name: "GPT-4.1" },
+      { id: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
+      { id: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
+    ],
+  },
+  DEEPSEEK_API_KEY: {
+    providerId: "deepseek",
+    apiKeyRef: "${DEEPSEEK_API_KEY}",
+    baseUrl: "https://api.deepseek.com/v1",
+    api: "openai-completions",
+    models: [
+      { id: "deepseek-chat", name: "DeepSeek Chat (V3)" },
+      { id: "deepseek-reasoner", name: "DeepSeek Reasoner (R1)" },
+    ],
+  },
+  GROK_API_KEY: {
+    providerId: "xai",
+    apiKeyRef: "${GROK_API_KEY}",
+    baseUrl: "https://api.x.ai/v1",
+    api: "openai-completions",
+    models: [
+      { id: "grok-3", name: "Grok 3" },
+      { id: "grok-3-mini", name: "Grok 3 Mini" },
+    ],
+  },
+  KIMI_API_KEY: {
+    providerId: "moonshot",
+    apiKeyRef: "${KIMI_API_KEY}",
+    baseUrl: "https://api.moonshot.cn/v1",
+    api: "openai-completions",
+    models: [
+      { id: "kimi-k2-0711", name: "Kimi K2" },
+    ],
+  },
+};
+
+/**
+ * Detect all API keys present in the environment and register their providers
+ * with OpenClaw.  Uses `models.mode: merge` so each registration adds to
+ * (rather than replaces) the existing provider list.
+ *
+ * @param {string} primaryAuthProvider - the providerId that onboard already configured
+ * @returns {Promise<{registered: string[], log: string}>}
+ */
+async function registerDetectedProviders(primaryAuthProvider) {
+  const registered = [];
+  let log = "";
+
+  // Ensure merge mode so we don't clobber the primary provider.
+  await runCmd(getOpenClawNode(), clawArgs(["config", "set", "models.mode", "merge"]));
+
+  for (const [envVar, entry] of Object.entries(PROVIDER_REGISTRY)) {
+    const keyValue = process.env[envVar]?.trim();
+    if (!keyValue) continue;
+
+    // Skip if this is the provider that onboard already configured.
+    if (entry.providerId === primaryAuthProvider) {
+      log += `\n[providers] ${entry.providerId}: skipped (already primary)`;
+      continue;
+    }
+
+    const providerCfg = {
+      apiKey: entry.apiKeyRef,
+      ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
+      ...(entry.api ? { api: entry.api } : {}),
+      models: entry.models,
+    };
+
+    const result = await runCmd(
+      getOpenClawNode(),
+      clawArgs(["config", "set", "--json", `models.providers.${entry.providerId}`, JSON.stringify(providerCfg)]),
+    );
+
+    if (result.code === 0) {
+      registered.push(entry.providerId);
+      log += `\n[providers] ${entry.providerId}: registered (${envVar} detected)`;
+    } else {
+      log += `\n[providers] ${entry.providerId}: FAILED (exit ${result.code}) ${result.output.slice(0, 200)}`;
+    }
+  }
+
+  return { registered, log };
+}
+
+// ---------------------------------------------------------------------------
+// Model selection helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map an authChoice value back to a providerId so we can skip re-registering it.
+ */
+function authChoiceToProviderId(authChoice) {
+  const map = {
+    "openrouter-api-key": "openrouter",
+    "openai-api-key": "openai",
+    "openai-codex": "openai",
+    "codex-cli": "openai",
+    "apiKey": "anthropic",
+    "token": "anthropic",
+    "claude-cli": "anthropic",
+    "gemini-api-key": "google",
+    "google-antigravity": "google",
+    "google-gemini-cli": "google",
+    "moonshot-api-key": "moonshot",
+    "kimi-code-api-key": "moonshot",
+  };
+  return map[authChoice] || "";
+}
+
+/**
+ * Pick the primary orchestration model — the "brain" that understands tasks
+ * and delegates.  Must be cheap enough to never hit rate limits.
+ */
+function pickPrimaryModel(authChoice) {
+  if (authChoice === "openrouter-api-key") return "openrouter/minimax/minimax-m2.5";
+  if (authChoice === "openai-api-key") return "openai/gpt-4.1";
+  if (authChoice === "openai-codex" || authChoice === "codex-cli") return "openai-codex/gpt-5.3-codex";
+  if (authChoice === "apiKey" || authChoice === "token" || authChoice === "claude-cli") return "anthropic/claude-sonnet-4-5";
+  if (authChoice === "gemini-api-key" || authChoice === "google-antigravity" || authChoice === "google-gemini-cli") return "gemini/gemini-2.5-pro";
+  return undefined;
+}
+
+/**
+ * Pick the coding subagent model — the "muscle" for writing/reviewing code.
+ * Prefers Anthropic direct when available (prompt caching, Max subscription).
+ */
+function pickSubagentModel(authChoice, registeredProviders) {
+  // If Anthropic was registered (directly or as secondary), always prefer it for coding.
+  if (registeredProviders.includes("anthropic")) return "anthropic/claude-opus-4-6";
+  if (authChoice === "apiKey" || authChoice === "token" || authChoice === "claude-cli") return "anthropic/claude-opus-4-6";
+  // OpenRouter fallback — still routes to Opus but through OR
+  if (authChoice === "openrouter-api-key") return "openrouter/anthropic/claude-opus-4.6";
+  if (authChoice === "openai-codex" || authChoice === "codex-cli") return "openai-codex/gpt-5.3-codex";
+  if (authChoice === "openai-api-key") return "openai/gpt-4.1";
+  if (authChoice === "gemini-api-key" || authChoice === "google-antigravity" || authChoice === "google-gemini-cli") return "gemini/gemini-2.5-pro";
+  return undefined;
+}
+
+/**
+ * Pick the heartbeat/cron model with fallback chain.
+ * Returns an array — primary + 3 fallbacks — for providers that support fallback chains.
+ * For providers that don't, returns just the primary as a string.
+ */
+function pickHeartbeatModels(authChoice) {
+  if (authChoice === "openrouter-api-key") {
+    // Free-tier models via OpenRouter, ordered by reliability.
+    return [
+      "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",   // NVIDIA-backed, 256K ctx
+      "openrouter/stepfun/step-3.5-flash:free",            // StepFun, 256K ctx, fast
+      "openrouter/upstage/solar-pro-3:free",               // Upstage, 128K ctx
+      "openrouter/arcee-ai/trinity-mini:free",             // Arcee, 131K ctx
+    ];
+  }
+  if (authChoice === "openai-api-key" || authChoice === "openai-codex" || authChoice === "codex-cli") return ["openai/gpt-4.1-nano"];
+  if (authChoice === "apiKey" || authChoice === "token" || authChoice === "claude-cli") return ["anthropic/claude-haiku-4-5"];
+  if (authChoice === "gemini-api-key" || authChoice === "google-antigravity" || authChoice === "google-gemini-cli") return ["gemini/gemini-2.5-flash"];
+  return ["openrouter/nvidia/nemotron-3-nano-30b-a3b:free"];
+}
+
 app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   try {
     if (isConfigured()) {
@@ -1015,14 +1199,45 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     }
     copyDefaultsRecursive(defaultWorkspaceDir, WORKSPACE_DIR);
 
-    // Cost optimization: cheap heartbeat model, context pruning, memory compaction, concurrency limits.
-    // These defaults prevent runaway API spend on a 24/7 Railway deployment.
+    // -----------------------------------------------------------------------
+    // Multi-provider auto-registration
+    // -----------------------------------------------------------------------
+    // Onboard only configures one provider.  Detect ALL API keys the user
+    // has set in Railway env vars and register the corresponding providers
+    // so OpenClaw can route to any of them.
+    const authChoice = payload.authChoice || "";
+    const primaryProviderId = authChoiceToProviderId(authChoice);
+
+    const { registered: registeredProviders, log: providerLog } =
+      await registerDetectedProviders(primaryProviderId);
+    extra += providerLog;
+
+    // -----------------------------------------------------------------------
+    // Model selection
+    // -----------------------------------------------------------------------
+    const primaryModel = pickPrimaryModel(authChoice);
+    const subagentModel = pickSubagentModel(authChoice, registeredProviders);
+    const heartbeatModels = pickHeartbeatModels(authChoice);
+
+    // Set the primary orchestration model.
+    if (primaryModel) {
+      await runCmd(getOpenClawNode(), clawArgs(["config", "set", "agents.defaults.model", primaryModel]));
+      extra += `\n[models] primary orchestration: ${primaryModel}`;
+    }
+
+    // -----------------------------------------------------------------------
+    // Cost-optimized defaults
+    // -----------------------------------------------------------------------
+    const heartbeatCfg = {
+      model: heartbeatModels[0],
+      // Fallback chain: if the primary heartbeat model is down, try the next.
+      ...(heartbeatModels.length > 1 ? { fallbacks: heartbeatModels.slice(1) } : {}),
+      every: "30m",
+      activeHours: { start: "06:00", end: "23:00", timezone: "UTC" },
+    };
+
     const costDefaults = {
-      heartbeat: {
-        model: "openrouter/openai/gpt-5-nano",
-        every: "30m",
-        activeHours: { start: "06:00", end: "23:00", timezone: "UTC" },
-      },
+      heartbeat: heartbeatCfg,
       contextPruning: {
         mode: "cache-ttl",
         ttl: "6h",
@@ -1036,6 +1251,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         },
       },
       memorySearch: {
+        // Use OpenAI embeddings if available, otherwise skip (OpenClaw handles gracefully).
         provider: "openai",
         model: "text-embedding-3-small",
         sources: ["memory", "sessions"],
@@ -1043,7 +1259,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       maxConcurrent: 4,
       subagents: {
         maxConcurrent: 8,
-        model: "openai-codex/gpt-5.3-codex",
+        ...(subagentModel ? { model: subagentModel } : {}),
       },
     };
     for (const [key, val] of Object.entries(costDefaults)) {
@@ -1052,7 +1268,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         : `agents.defaults.${key}`;
       await runCmd(getOpenClawNode(), clawArgs(["config", "set", "--json", configKey, JSON.stringify(val)]));
     }
-    extra += `\n[cost] applied cost-optimized defaults (cheap heartbeat, context pruning, memory compaction)`;
+    const isAnthropicDirect = subagentModel?.startsWith("anthropic/");
+    if (subagentModel) extra += `\n[models] coding subagent: ${subagentModel}${isAnthropicDirect ? " (direct — prompt caching + Max subscription)" : ""}`;
+    extra += `\n[models] heartbeat: ${heartbeatModels[0]} + ${heartbeatModels.length - 1} fallbacks`;
+    extra += `\n[cost] applied cost-optimized defaults (context pruning, memory compaction, concurrency limits)`;
 
     // Auto-configure webhook hooks for n8n bridge when OPENCLAW_HOOKS_TOKEN is set.
     if (OPENCLAW_HOOKS_TOKEN) {

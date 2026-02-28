@@ -389,32 +389,53 @@ Running OpenClaw 24/7 on Railway can burn through API credits fast. This templat
 
 | Setting | Value | Why |
 |---|---|---|
-| **Heartbeat model** | `openrouter/openai/gpt-5-nano` | Background checks run every 30min — use the cheapest model ($0.005/day vs $0.24/day with Opus) |
+| **Heartbeat model** | *matched to your auth provider* | Background checks run every 30min — uses the cheapest model compatible with your provider |
 | **Active hours** | 06:00-23:00 UTC | Skip heartbeats while nobody's awake |
 | **Context pruning** | `cache-ttl` with 6h TTL | Automatically prune old context, keep cache valid, reduce token bloat |
 | **Memory compaction** | Flush at 40k tokens | Distill sessions into daily memory files instead of growing context forever |
 | **Embeddings** | `text-embedding-3-small` | Cheapest OpenAI embedding model for memory search |
-| **Coding subagents** | `openai-codex/gpt-5.3-codex` | GPT-5.3 Codex for coding tasks — purpose-built for agentic code work |
+| **Coding subagents** | *matched to your auth provider* | Auto-selects a capable coding model compatible with your configured auth |
 | **Concurrency limits** | 4 agents, 8 subagents max | Prevent cascading retries and runaway token consumption |
 
 ### Brain + Muscle Pattern
 
 Use an expensive model as the "brain" (orchestrator) and cheaper models as "muscles" (workers):
 
-| Role | Recommended Model | Cost |
-|---|---|---|
-| **Brain** (orchestration) | `anthropic/claude-opus-4-6` | $$$ |
-| **Coding muscle** | `openai-codex/gpt-5.3-codex` (default) | $$ |
-| **Heartbeat** | `openrouter/openai/gpt-5-nano` | Free-tier |
-| **Subagents** | `deepseek/deepseek-reasoner` | $ |
-| **Web search** | Brave API | $ |
-| **Social/trending** | xAI Grok API | $ |
+| Role | OpenRouter Default | Why | Cost |
+|---|---|---|---|
+| **Brain** (orchestration) | `minimax/minimax-m2.5` | 196K context, $0.29/M in — cheap enough to never rate-limit, strong at task delegation | $ |
+| **Coding muscle** | `anthropic/claude-opus-4.6` | Top-tier code generation, 1M context, deep reasoning | $$$ |
+| **Heartbeat/cron** | `nvidia/nemotron-3-nano-30b-a3b:free` | Free-tier, 256K context, NVIDIA-backed reliability | Free |
+| **Web search** | Brave API | | $ |
+| **Social/trending** | xAI Grok API | | $ |
 
-Configure via the `/setup` config editor or tell your OpenClaw directly: *"For coding, use DeepSeek. For heartbeats, use the cheapest model available."*
+All three model roles are auto-selected based on your auth provider during setup. OpenRouter users get the best spread across cost tiers.
+
+### Multi-Provider Auto-Registration
+
+The setup wizard only configures one auth provider, but you can set **multiple API keys** in Railway variables. The template automatically detects and registers every available provider:
+
+| Environment Variable | Provider Registered | Models Available |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `anthropic` | Opus 4.6, Sonnet 4.6, Haiku 4.5 |
+| `OPENAI_API_KEY` | `openai` | GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano |
+| `DEEPSEEK_API_KEY` | `deepseek` | DeepSeek Chat (V3), DeepSeek Reasoner (R1) |
+| `GROK_API_KEY` | `xai` | Grok 3, Grok 3 Mini |
+| `KIMI_API_KEY` | `moonshot` | Kimi K2 |
+
+When `ANTHROPIC_API_KEY` is detected alongside OpenRouter, coding subagents automatically route through Anthropic direct — giving you prompt caching, batch discounts, and Max subscription rate limits on the expensive coding work.
+
+### Heartbeat Fallback Chain
+
+Heartbeats use free-tier models via OpenRouter with automatic failover:
+
+1. `nvidia/nemotron-3-nano-30b-a3b:free` (primary — NVIDIA, 256K context)
+2. `stepfun/step-3.5-flash:free` (fallback — StepFun, 256K context)
+3. `upstage/solar-pro-3:free` (fallback — Upstage, 128K context)
+4. `arcee-ai/trinity-mini:free` (fallback — Arcee, 131K context)
 
 ### Further Savings
 
-- Add `OPENROUTER_API_KEY` for access to dozens of cheap models via one API key
 - Set model fallback chains in config so rate limits don't cascade to expensive retries
 - Create a `HEARTBEAT.md` in your workspace — if it's empty, heartbeats are skipped entirely
 
