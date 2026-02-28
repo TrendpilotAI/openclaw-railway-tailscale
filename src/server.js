@@ -1404,7 +1404,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
   return res.status(ok ? 200 : 500).json({
     ok,
-    output: `${onboard.output}${extra}`,
+    output: redactSecrets(`${onboard.output}${extra}`),
   });
   } catch (err) {
     console.error("[/setup/api/run] error:", err);
