@@ -1450,12 +1450,16 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
 
 function redactSecrets(text) {
   if (!text) return text;
-  // Very small best-effort redaction. (Config paths/values may still contain secrets.)
+  // Best-effort redaction for common secret formats.
   return String(text)
-    .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
-    .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
-    .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
-    .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]");
+    .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")           // OpenAI / Anthropic API keys
+    .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")            // GitHub OAuth tokens
+    .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")     // Slack bot/app tokens
+    .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]")     // Generic long secrets
+    .replace(/(\d{8,}:[A-Za-z0-9_-]{30,})/g, "[REDACTED]")        // Telegram bot tokens (123456789:AABBcc...)
+    .replace(/(M[A-Za-z0-9]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})/g, "[REDACTED]")  // Discord bot tokens
+    .replace(/(xai-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")           // xAI/Grok API keys
+    .replace(/(dsk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]");          // DeepSeek API keys
 }
 
 function extractDeviceRequestIds(text) {
