@@ -4,7 +4,7 @@ set -euo pipefail
 # Configures local OpenClaw CLI to talk to the Railway OpenClaw gateway over Tailscale.
 # Also ensures local Tailscale is connected.
 
-HOSTNAME_TAILNET="openclaw-railway.taild36ce1.ts.net"
+HOSTNAME_TAILNET="openclaw-railway.<your-tailnet>.ts.net"
 RAILWAY_SERVICE="openclaw-railway-template"
 GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
 SKIP_TAILSCALE_UP=0
@@ -18,7 +18,7 @@ Usage:
   scripts/connect-mac-to-railway-gateway.sh [options]
 
 Options:
-  --host <dns-name>         Tailnet host (default: openclaw-railway.taild36ce1.ts.net)
+  --host <dns-name>         Tailnet host (default: openclaw-railway.<your-tailnet>.ts.net)
   --service <name>          Railway service for token lookup (default: openclaw-railway-template)
   --token <token>           Explicit gateway token (skips Railway fetch)
   --skip-token-fetch        Do not fetch token from Railway CLI
