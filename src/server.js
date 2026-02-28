@@ -539,12 +539,39 @@ async function restartGateway() {
   return ensureGatewayRunning();
 }
 
+// ---------------------------------------------------------------------------
+// Setup auth with rate limiting
+// ---------------------------------------------------------------------------
+/** @type {Map<string, { count: number, blockedUntil: number }>} */
+const authAttempts = new Map();
+const AUTH_MAX_ATTEMPTS = 5;
+const AUTH_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+/** Prune expired entries periodically to avoid unbounded growth. */
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of authAttempts) {
+    if (now > entry.blockedUntil && entry.count === 0) authAttempts.delete(ip);
+  }
+}, 5 * 60 * 1000).unref();
+
 function requireSetupAuth(req, res, next) {
   if (!SETUP_PASSWORD) {
     return res
       .status(500)
       .type("text/plain")
       .send("SETUP_PASSWORD is not set. Set it in Railway Variables before using /setup.");
+  }
+
+  // Rate limiting by IP.
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = authAttempts.get(ip) || { count: 0, blockedUntil: 0 };
+
+  if (now < entry.blockedUntil) {
+    const retryAfter = Math.ceil((entry.blockedUntil - now) / 1000);
+    res.set("Retry-After", String(retryAfter));
+    return res.status(429).send(`Too many attempts. Try again in ${retryAfter}s.`);
   }
 
   const header = req.headers.authorization || "";
@@ -556,10 +583,26 @@ function requireSetupAuth(req, res, next) {
   const decoded = Buffer.from(encoded, "base64").toString("utf8");
   const idx = decoded.indexOf(":");
   const password = idx >= 0 ? decoded.slice(idx + 1) : "";
-  if (password !== SETUP_PASSWORD) {
+
+  // Timing-safe comparison to prevent side-channel attacks.
+  const pwBuf = Buffer.from(password);
+  const expectedBuf = Buffer.from(SETUP_PASSWORD);
+  const match = pwBuf.length === expectedBuf.length && crypto.timingSafeEqual(pwBuf, expectedBuf);
+
+  if (!match) {
+    entry.count += 1;
+    // Exponential backoff: 2^(attempts-threshold) seconds, capped at 15 minutes.
+    if (entry.count >= AUTH_MAX_ATTEMPTS) {
+      const backoffMs = Math.min(Math.pow(2, entry.count - AUTH_MAX_ATTEMPTS) * 1000, AUTH_WINDOW_MS);
+      entry.blockedUntil = now + backoffMs;
+    }
+    authAttempts.set(ip, entry);
     res.set("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
     return res.status(401).send("Invalid password");
   }
+
+  // Reset on successful auth.
+  authAttempts.delete(ip);
   return next();
 }
 
@@ -580,7 +623,7 @@ app.get("/setup/healthz", (_req, res) => res.json({
 }));
 
 // Public health endpoint (no auth) so Railway can probe without /setup.
-// Keep this free of secrets.
+// Deliberately minimal — no internal paths, targets, or error details.
 app.get("/healthz", async (_req, res) => {
   let gatewayReachable = false;
   if (isConfigured() && gatewayProc) {
@@ -594,17 +637,10 @@ app.get("/healthz", async (_req, res) => {
 
   res.json({
     ok: true,
-    wrapper: {
-      configured: isConfigured(),
-      stateDir: STATE_DIR,
-      workspaceDir: WORKSPACE_DIR,
-    },
+    configured: isConfigured(),
     gateway: {
-      target: GATEWAY_TARGET,
+      running: Boolean(gatewayProc),
       reachable: gatewayReachable,
-      lastError: lastGatewayError,
-      lastExit: lastGatewayExit,
-      lastDoctorAt,
     },
   });
 });

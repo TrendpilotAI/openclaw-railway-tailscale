@@ -91,8 +91,6 @@ Delete the old single-service template (`W28_9m`) after the new multi-service te
 | Resource | URL |
 |---|---|
 | Live template | `https://railway.com/deploy/cDVYRI` |
-| Template editor | `https://railway.com/workspace/templates/31ee2f9f-9d66-482f-84f9-90b86cf5a284` |
-| Old template (to delete) | `https://railway.com/deploy/W28_9m` |
 | Railway GraphQL API | `https://backboard.railway.com/graphql/v2` |
 | Template JSON Schema | `https://backboard.railway.com/schema/template.schema.json` |
 | Template config snapshot | `/tmp/railway-template-config.json` (local) |

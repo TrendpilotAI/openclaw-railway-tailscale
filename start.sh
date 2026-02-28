@@ -44,8 +44,7 @@ fi
 
 # --- GitHub CLI Setup ---
 if [ -n "$GITHUB_TOKEN" ]; then
-  git config --global credential.helper store
-  echo "https://oauth2:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+  git config --global url."https://oauth2:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
   echo "[github] Credentials configured"
 fi
 

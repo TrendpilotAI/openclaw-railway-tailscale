@@ -526,7 +526,7 @@ This script:
 Optional flags:
 
 ```bash
-scripts/connect-mac-to-railway-gateway.sh --host openclaw-railway.taild36ce1.ts.net
+scripts/connect-mac-to-railway-gateway.sh --host openclaw-railway.<your-tailnet>.ts.net
 scripts/connect-mac-to-railway-gateway.sh --token <gateway-token>
 scripts/connect-mac-to-railway-gateway.sh --skip-token-fetch
 ```
